@@ -18,7 +18,7 @@ Source organization: `fiducia-cloud`
 
 | Source | Commit | Branch observed |
 |---|---:|---|
-| `fiducia-cloud/fiducia-infra` | `e24d195f1247b099aabf48698ecc23e6fd3e74c3` | `main` |
+| `fiducia-cloud/fiducia-infra` | `0323e41b4d36514c4021ac6016abcc976948bbe2` | `main` |
 
 ## Dependency lanes
 
