@@ -1,0 +1,69 @@
+# Additive cross-organization fixture; it does not modify the generated harness.
+name: namespace ownership canary
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/namespace-ownership-canary.yml'
+      - 'scripts/namespace-ownership-canary.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: namespace-ownership-canary-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: exact-head contract from fiducia-cloud-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out canary without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Check out exact public k8s-cluster subject
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/k8s-cluster
+          ref: a12c36a2f5ceaaaec27e1279fb6ff9ef5f26e7e4
+          path: subject
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Compile source and canary validators
+        run: |
+          python3 -m py_compile \
+            subject/tools/namespace_migration.py \
+            subject/tools/test_namespace_migration.py \
+            subject/tools/namespace_test_owner_contract.py \
+            subject/tools/test_namespace_test_owner_contract.py \
+            scripts/namespace-ownership-canary.py
+
+      - name: Run source namespace tests
+        run: |
+          python3 subject/tools/test_namespace_migration.py
+          python3 subject/tools/test_namespace_test_owner_contract.py
+
+      - name: Run independent test-org canary
+        run: |
+          mkdir -p artifacts
+          python3 scripts/namespace-ownership-canary.py \
+            --subject subject \
+            --format json \
+            > artifacts/namespace-ownership-canary.json
+
+      - name: Upload metadata-only canary evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: namespace-ownership-canary
+          path: artifacts/namespace-ownership-canary.json
+          if-no-files-found: error
+          retention-days: 14
