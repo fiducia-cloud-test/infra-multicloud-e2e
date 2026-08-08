@@ -1,6 +1,6 @@
-# DEN-845 namespace baseline classification
+# DEN-845 deterministic namespace manifest refresh
 
-The `ORESoftware/k8s-cluster` namespace migration workflow is a production gate. This independent `fiducia-cloud-test` lane determines whether the failure seen on bridge repair PR #1210 is inherited from its exact `dev` base or introduced by the repair.
+The `ORESoftware/k8s-cluster` namespace migration workflow is a production gate. This independent `fiducia-cloud-test` lane reproduces that workflow for the exact base and exact bridge-repair head, proves whether a refresh is required, and emits one validated replacement manifest.
 
 ## Exact comparison
 
@@ -8,21 +8,37 @@ The `ORESoftware/k8s-cluster` namespace migration workflow is a production gate.
 - Head: `ORESoftware/k8s-cluster@664ea2fa106168e7e62ab70adb5719d54f59e9c4`
 - Production PR: `ORESoftware/k8s-cluster#1210`
 
-The harness runs the repository-owned classifier and manifest adversarial tests in both trees, regenerates each read-only inventory, evaluates each committed manifest, verifies the production PR's exact eight-file change set, compares the committed manifest blob, and runs the repository-owned base-to-head new-debt ratchet.
+The first version of this lane treated the failure as possibly inherited. Its exact comparison disproved that interpretation: the base manifest is valid, the digest-only head changes namespace inventory identities, and the unchanged committed manifest becomes stale. The production PR therefore needs a deterministic manifest refresh rather than an exception.
 
-## Passing classification
+## Production-equivalent evaluation
+
+The harness deliberately matches the production workflow's ordering and shell-redirection behavior:
+
+1. Run the repository-owned namespace classifier and manifest adversarial tests.
+2. Write the ownership-contract report.
+3. Create and populate `artifacts/namespace-inventory.json` through the same redirection semantics used in production.
+4. Check the committed migration manifest against that exact inventory.
+5. Run the exact base-to-head namespace debt ratchet.
+6. Render a replacement manifest from the exact head inventory.
+7. Check the replacement manifest against the same inventory.
+
+It also verifies the production PR's exact eight-file scope and confirms that the committed manifest blob was not already edited.
+
+## Passing result
 
 A green result means all of the following are true:
 
 - both namespace ownership contracts are valid;
-- the committed migration manifest was already stale at the exact base;
-- the same committed manifest blob remains unchanged at the exact head;
-- the head remains stale for the inherited reason;
-- the base-to-head namespace ratchet is valid and reports no new violations or diagnostics;
-- the production PR changed only its reviewed bridge/Slack/runner manifest, workflow, and test paths.
+- the exact base manifest is valid under production semantics;
+- the exact head manifest is stale under those same semantics;
+- the production PR leaves the committed manifest blob unchanged before repair;
+- the base-to-head ratchet reports no new violations or diagnostics;
+- the generated replacement validates against the exact head inventory;
+- the replacement entry count equals the exact head inventory occurrence count;
+- the production PR changed only the reviewed bridge, Slack-command, runner, focused workflow, and contract-test paths.
 
-The generated JSON records base/head inventory counts, deterministic report hashes, manifest diagnostics, the ratchet result, and exact changed paths. It contains no credentials or secret values.
+The uploaded evidence records deterministic report hashes, counts, diagnostics, the ratchet result, the generated manifest SHA-256 and Git blob identity, and the exact changed paths. The candidate manifest is uploaded separately so it can be applied verbatim in a focused production commit.
 
-## Non-goals
+## Safety boundary
 
-This classification does not repair, suppress, weaken, or waive the production namespace gate. The canonical manifest still needs a separately reviewed regeneration or debt-reconciliation change. This lane only prevents the unrelated bridge digest repair from being misclassified as the source of inherited namespace drift.
+This test lane never writes to the production repository and never weakens or waives the production namespace gate. It performs no cluster, Cloudflare, R2, Slack, or model-provider operation and needs no secret credential. The replacement must still be committed to PR #1210 and pass the production namespace workflow on the resulting exact head.
