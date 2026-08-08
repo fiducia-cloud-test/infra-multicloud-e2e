@@ -122,8 +122,8 @@ jobs:
           }
           manifest_identity = {
               (
-                  item['source']['path'], item['source']['line'],
-                  item['source']['column'], item['system'], item['current'],
+                  item['path'], item['line'], item['column'],
+                  item['system'], item['current'],
               )
               for item in entries
           }
