@@ -104,13 +104,30 @@ async function tier1TunnelHostProxied() {
     : fail("1", "tunnel host is Cloudflare-proxied", `unproxied origin exposed: ${answers.join(", ")}`);
 }
 
+// DoH hands back CAA in RFC 3597 unknown-record form -- `\# <len> <hex bytes>`
+// -- not as text. A naive substring match against that string silently never
+// matches, which reads as "CAA does not permit this CA" for a zone that permits
+// it fine. Decode properly: 1 byte flags, 1 byte tag length, tag, then value.
+function decodeCaa(raw) {
+  const m = /^\\?#\s+\d+\s+([0-9a-fA-F ]+)$/.exec(raw.trim());
+  if (!m) return raw; // already text form (some resolvers)
+  const bytes = m[1].trim().split(/\s+/).map((h) => parseInt(h, 16));
+  if (bytes.length < 2) return "";
+  const tagLen = bytes[1];
+  const tag = String.fromCharCode(...bytes.slice(2, 2 + tagLen));
+  const value = String.fromCharCode(...bytes.slice(2 + tagLen));
+  return `${tag} ${value}`;
+}
+
 async function tier1CaaCoversLiveIssuers() {
-  const caa = (await doh(ZONE, "CAA")).join(" ");
+  const decoded = (await doh(ZONE, "CAA")).map(decodeCaa);
+  const caa = decoded.join(" ");
   if (!caa.trim()) {
     fail("1", "CAA present", "no CAA records — any CA may issue for this zone");
     return;
   }
-  pass("1", "CAA present", `${caa.split("issue").length - 1} issue entries`);
+  const issueCount = decoded.filter((d) => d.startsWith("issue ")).length;
+  pass("1", "CAA present", `${issueCount} issue entries, ${decoded.length} total`);
 
   // Whatever CAA says, it must permit the CAs actually serving the zone today,
   // or renewal breaks silently weeks later.
