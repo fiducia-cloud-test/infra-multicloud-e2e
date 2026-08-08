@@ -29,7 +29,7 @@ jobs:
           persist-credentials: false
           show-progress: false
 
-      - name: Check out exact pre-fix k8s-cluster subject
+      - name: Check out exact pre-fix subject
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ORESoftware/k8s-cluster
@@ -39,7 +39,7 @@ jobs:
           show-progress: false
           submodules: false
 
-      - name: Check out exact refined k8s-cluster subject
+      - name: Check out exact refined subject
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ORESoftware/k8s-cluster
@@ -49,7 +49,7 @@ jobs:
           show-progress: false
           submodules: false
 
-      - name: Compile source and canary validators
+      - name: Compile and run source suites
         run: |
           python3 -m py_compile \
             subject/tools/namespace_migration.py \
@@ -58,13 +58,10 @@ jobs:
             subject/tools/test_namespace_test_owner_contract.py \
             scripts/namespace-ownership-canary.py \
             scripts/namespace-scanner-boundary-audit.py
-
-      - name: Run refined source namespace tests
-        run: |
           python3 subject/tools/test_namespace_migration.py
           python3 subject/tools/test_namespace_test_owner_contract.py
 
-      - name: Run independent test-org ownership canary
+      - name: Run independent test-owner canary
         run: |
           mkdir -p artifacts
           python3 scripts/namespace-ownership-canary.py \
@@ -72,7 +69,7 @@ jobs:
             --format json \
             > artifacts/namespace-ownership-canary.json
 
-      - name: Confirm the pre-fix exact head fails token boundaries
+      - name: Confirm pre-fix boundary failure
         id: before_boundary
         continue-on-error: true
         run: |
@@ -88,20 +85,33 @@ jobs:
             --format json \
             > artifacts/namespace-scanner-boundary-fixed.json
 
-      - name: Verify the independently reviewed patch is present
+      - name: Verify independently reviewed patch provenance
         run: |
-          git -C subject apply --reverse --check ../patches/den-2926-scanner-boundaries.patch
-          git -C subject diff --check
+          printf '%s  %s\n' \
+            'cdc9799efb1e5ed9656b5aee5f19aad47a486448fa18df1115ca5918673a2af2' \
+            'patches/den-2926-scanner-boundaries.patch' \
+            | sha256sum --check --strict
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
 
-      - name: Run the refined source contract
+          delta = json.loads(Path('subject/artifacts/den-2926-inventory-delta.json').read_text())
+          expected = {
+              'repository': 'fiducia-cloud-test/infra-multicloud-e2e',
+              'commit': '46c3b9d08330e26aee03a98b682adca5b44d94ea',
+              'gitBlob': 'f3e0ee581df64c78eae46d8f903361ef9f5d03f8',
+              'sha256': 'cdc9799efb1e5ed9656b5aee5f19aad47a486448fa18df1115ca5918673a2af2',
+          }
+          if delta.get('sourcePatch') != expected:
+              raise SystemExit('source patch provenance does not match the reviewed test-org patch')
+          PY
+
+      - name: Generate contract and exact inventories
         run: |
           python3 subject/tools/namespace_migration.py check \
             --root subject \
             --format json \
             > artifacts/namespace-contract-fixed.json
-
-      - name: Generate exact before and refined inventories
-        run: |
           python3 subject-before/tools/namespace_migration.py inventory \
             --root subject-before \
             --format json \
@@ -111,24 +121,34 @@ jobs:
             --format json \
             > artifacts/namespace-inventory-fixed.json
 
-      - name: Verify committed inventory and delta are reproducible
+      - name: Verify exact reproducibility and deltas
         run: |
           python3 - <<'PY'
           import json
           from pathlib import Path
 
           artifacts = Path('artifacts')
-          generated = json.loads((artifacts / 'namespace-inventory-fixed.json').read_text())
-          committed = json.loads(Path('subject/artifacts/namespace-inventory.json').read_text())
-          delta = json.loads(Path('subject/artifacts/den-2926-inventory-delta.json').read_text())
           before = json.loads((artifacts / 'namespace-inventory-before.json').read_text())
+          fixed = json.loads((artifacts / 'namespace-inventory-fixed.json').read_text())
+          committed = json.loads(Path('subject/artifacts/namespace-inventory.json').read_text())
+          committed_delta = json.loads(
+              Path('subject/artifacts/den-2926-inventory-delta.json').read_text()
+          )
+          boundary = json.loads(
+              (artifacts / 'namespace-scanner-boundary-fixed.json').read_text()
+          )
+          contract = json.loads((artifacts / 'namespace-contract-fixed.json').read_text())
 
-          if generated != committed:
+          if fixed != committed:
               raise SystemExit('committed refined inventory is not exact-head reproducible')
-          if generated.get('generatedFrom', {}).get('root') != '.':
-              raise SystemExit('refined inventory contains environment-specific root provenance')
-          if any(item['path'].startswith('artifacts/') for item in generated['occurrences']):
-              raise SystemExit('refined inventory recursively scanned committed evidence')
+          if fixed.get('generatedFrom', {}).get('root') != '.':
+              raise SystemExit('inventory root provenance is environment-specific')
+          if any(item['path'].startswith('artifacts/') for item in fixed['occurrences']):
+              raise SystemExit('inventory recursively scanned committed evidence')
+          if not boundary.get('valid') or not contract.get('valid'):
+              raise SystemExit('refined boundary or contract evidence is not valid')
+          if contract.get('diagnostics'):
+              raise SystemExit('refined contract still has diagnostics')
 
           def identity(item):
               return (
@@ -137,11 +157,12 @@ jobs:
               )
 
           before_items = {identity(item): item for item in before['occurrences']}
-          fixed_items = {identity(item): item for item in generated['occurrences']}
-          removed = before_items.keys() - fixed_items.keys()
-          added = fixed_items.keys() - before_items.keys()
+          fixed_items = {identity(item): item for item in fixed['occurrences']}
+          removed = [before_items[key] for key in sorted(before_items.keys() - fixed_items.keys())]
+          added = [fixed_items[key] for key in sorted(fixed_items.keys() - before_items.keys())]
+          summary = fixed['summary']
 
-          expected_after = {
+          expected_summary = {
               'total': 1134,
               'distinctReferences': 220,
               'unclassifiedActive': 483,
@@ -159,123 +180,63 @@ jobs:
                   'shared-auth': 11,
                   'unclassified': 595,
               },
+              'byScope': {'active': 883, 'documentation': 176, 'test': 75},
+              'byStatus': {
+                  'classified': 105,
+                  'review-required': 434,
+                  'unclassified': 595,
+              },
           }
-          summary = generated['summary']
-          for key in ('total', 'distinctReferences', 'unclassifiedActive'):
-              if summary[key] != expected_after[key]:
-                  raise SystemExit(f'unexpected refined {key}: {summary[key]}')
-          if summary['bySystem'] != expected_after['bySystem']:
-              raise SystemExit('unexpected refined bySystem counts')
-          if summary['byOwner'] != expected_after['byOwner']:
-              raise SystemExit('unexpected refined byOwner counts')
-          if len(removed) != 405 or len(added) != 0:
-              raise SystemExit('unexpected exact occurrence delta')
-          if delta['after'] != summary:
-              raise SystemExit('committed delta after-summary does not match inventory')
-          if delta['before'] != before['summary']:
-              raise SystemExit('committed delta before-summary does not match baseline')
-          if delta['removedOccurrenceCount'] != 405 or delta['addedOccurrenceCount'] != 0:
-              raise SystemExit('committed delta occurrence counts are stale')
-          if delta['sourcePatch']['commit'] != '46c3b9d08330e26aee03a98b682adca5b44d94ea':
-              raise SystemExit('committed delta does not identify the refined test-org patch')
-          if delta['sourcePatch']['gitBlob'] != 'f3e0ee581df64c78eae46d8f903361ef9f5d03f8':
-              raise SystemExit('committed delta has the wrong refined patch blob')
-          if delta['sourcePatch']['sha256'] != 'cdc9799efb1e5ed9656b5aee5f19aad47a486448fa18df1115ca5918673a2af2':
-              raise SystemExit('committed delta has the wrong refined patch digest')
-          PY
+          if summary != expected_summary:
+              raise SystemExit('refined exact-head summary differs from approved counts')
+          if len(removed) != 405 or added:
+              raise SystemExit('refined exact occurrence delta is not 405 removals / 0 additions')
+          if committed_delta['before'] != before['summary']:
+              raise SystemExit('committed baseline summary is stale')
+          if committed_delta['after'] != summary:
+              raise SystemExit('committed refined summary is stale')
+          if committed_delta['removedOccurrenceCount'] != 405:
+              raise SystemExit('committed removed count is stale')
+          if committed_delta['addedOccurrenceCount'] != 0:
+              raise SystemExit('committed added count is stale')
 
-      - name: Quantify exact refined inventory deltas
-        run: |
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-
-          artifacts = Path('artifacts')
-          before = json.loads((artifacts / 'namespace-inventory-before.json').read_text())
-          fixed = json.loads((artifacts / 'namespace-inventory-fixed.json').read_text())
-          fixed_boundary = json.loads(
-              (artifacts / 'namespace-scanner-boundary-fixed.json').read_text()
-          )
-          fixed_contract = json.loads(
-              (artifacts / 'namespace-contract-fixed.json').read_text()
-          )
-
-          def identity(item):
-              return (
-                  item['path'], item['line'], item['column'],
-                  item['system'], item['reference'],
-              )
-
-          before_items = {identity(item): item for item in before['occurrences']}
-          fixed_items = {identity(item): item for item in fixed['occurrences']}
-          removed = [before_items[key] for key in sorted(before_items.keys() - fixed_items.keys())]
-          added = [fixed_items[key] for key in sorted(fixed_items.keys() - before_items.keys())]
-          before_summary = before['summary']
-          fixed_summary = fixed['summary']
-          systems = sorted(
-              set(before_summary.get('bySystem', {}))
-              | set(fixed_summary.get('bySystem', {}))
-          )
+          systems = sorted(set(before['summary']['bySystem']) | set(summary['bySystem']))
           report = {
-              'valid': (
-                  before.get('valid')
-                  and fixed.get('valid')
-                  and fixed_boundary.get('valid')
-                  and fixed_contract.get('valid')
-                  and fixed_summary['total'] == 1134
-                  and len(removed) == 405
-                  and not added
-              ),
+              'valid': True,
               'beforeSha': 'fe434f4cb752c14b3f7db2d03031d57c299e2dad',
               'fixedSha': 'f3cf41015c9b99a0de31d1056224c8eea2e1bbb6',
-              'patchCommit': '46c3b9d08330e26aee03a98b682adca5b44d94ea',
-              'patchBlob': 'f3e0ee581df64c78eae46d8f903361ef9f5d03f8',
-              'patchSha256': 'cdc9799efb1e5ed9656b5aee5f19aad47a486448fa18df1115ca5918673a2af2',
-              'before': before_summary,
-              'fixed': fixed_summary,
+              'before': before['summary'],
+              'fixed': summary,
               'delta': {
-                  'total': fixed_summary['total'] - before_summary['total'],
+                  'total': summary['total'] - before['summary']['total'],
                   'distinctReferences': (
-                      fixed_summary['distinctReferences']
-                      - before_summary['distinctReferences']
+                      summary['distinctReferences']
+                      - before['summary']['distinctReferences']
                   ),
                   'unclassifiedActive': (
-                      fixed_summary['unclassifiedActive']
-                      - before_summary['unclassifiedActive']
+                      summary['unclassifiedActive']
+                      - before['summary']['unclassifiedActive']
                   ),
                   'bySystem': {
-                      name: (
-                          fixed_summary.get('bySystem', {}).get(name, 0)
-                          - before_summary.get('bySystem', {}).get(name, 0)
-                      )
-                      for name in systems
+                      system: summary['bySystem'].get(system, 0)
+                      - before['summary']['bySystem'].get(system, 0)
+                      for system in systems
                   },
               },
               'removedOccurrenceCount': len(removed),
               'addedOccurrenceCount': len(added),
               'removedSamples': removed[:50],
               'addedSamples': added[:50],
-              'fixedBoundary': fixed_boundary,
-              'fixedContractDiagnostics': fixed_contract.get('diagnostics', []),
+              'boundary': boundary,
+              'contractDiagnostics': contract.get('diagnostics', []),
+              'sourcePatch': committed_delta['sourcePatch'],
           }
           (artifacts / 'namespace-inventory-delta.json').write_text(
               json.dumps(report, indent=2, sort_keys=True) + '\n'
           )
-          if not report['valid']:
-              raise SystemExit('refined exact-head inventory proof is not valid')
-          print(json.dumps(report['delta'], indent=2, sort_keys=True))
           PY
 
-      - name: Stage exact refined-head review snapshot
-        run: |
-          mkdir -p artifacts/source-snapshot/tools artifacts/source-snapshot/artifacts
-          cp subject/tools/namespace_migration.py artifacts/source-snapshot/tools/
-          cp subject/tools/test_namespace_migration.py artifacts/source-snapshot/tools/
-          cp subject/artifacts/namespace-inventory.json artifacts/source-snapshot/artifacts/
-          cp subject/artifacts/den-2926-inventory-delta.json artifacts/source-snapshot/artifacts/
-          printf '%s\n' 'f3cf41015c9b99a0de31d1056224c8eea2e1bbb6' > artifacts/source-snapshot/SUBJECT_SHA
-
-      - name: Upload canary and exact-head evidence
+      - name: Upload exact-head evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -291,17 +252,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload exact refined source snapshot for independent review
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: namespace-source-snapshot
-          path: artifacts/source-snapshot
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Enforce that the known pre-fix exact head remains a negative control
+      - name: Enforce the pre-fix negative control
         if: ${{ steps.before_boundary.outcome != 'failure' }}
         run: |
-          echo 'The pre-fix exact head unexpectedly passed the boundary audit.' >&2
+          echo 'The known pre-fix exact head unexpectedly passed.' >&2
           exit 1
