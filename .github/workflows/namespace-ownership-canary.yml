@@ -43,7 +43,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ORESoftware/k8s-cluster
-          ref: d351dfb30e0fb1a2772edf9b44dfd9a407746fe5
+          ref: 89f36db9b3bbdc42f9b79261ddc82185e8f7dff2
           path: subject
           persist-credentials: false
           show-progress: false
@@ -164,7 +164,7 @@ jobs:
                   and fixed_summary['total'] < before_summary['total']
               ),
               'beforeSha': 'fe434f4cb752c14b3f7db2d03031d57c299e2dad',
-              'fixedSha': 'd351dfb30e0fb1a2772edf9b44dfd9a407746fe5',
+              'fixedSha': '89f36db9b3bbdc42f9b79261ddc82185e8f7dff2',
               'patchSha256': '6ef14b922189f1d5e7ab18f55a386a117c6dbdabced9f37e82b76fcaaf81242c',
               'before': before_summary,
               'fixed': fixed_summary,
@@ -208,7 +208,7 @@ jobs:
           cp subject/tools/test_namespace_migration.py artifacts/source-snapshot/tools/
           cp subject/artifacts/namespace-inventory.json artifacts/source-snapshot/artifacts/
           cp subject/artifacts/den-2926-inventory-delta.json artifacts/source-snapshot/artifacts/
-          printf '%s\n' 'd351dfb30e0fb1a2772edf9b44dfd9a407746fe5' > artifacts/source-snapshot/SUBJECT_SHA
+          printf '%s\n' '89f36db9b3bbdc42f9b79261ddc82185e8f7dff2' > artifacts/source-snapshot/SUBJECT_SHA
 
       - name: Upload canary and exact-head evidence
         if: ${{ !cancelled() }}
