@@ -340,8 +340,8 @@ async function main() {
   await tier1Dnssec();
 
   if (creds.accountId && creds.accessKeyId && creds.secretAccessKey) {
-    await tier2BlastRadius(creds);
-    await tier2ScopedCredsEnforced(creds);
+    const parentIsScoped = await tier2BlastRadius(creds);
+    await tier2ScopedCredsEnforced(creds, parentIsScoped);
   } else {
     skip("2", "R2 blast-radius checks",
          "set CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY to run");
