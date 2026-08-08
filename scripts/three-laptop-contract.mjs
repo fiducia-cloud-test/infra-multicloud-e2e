@@ -19,6 +19,7 @@ for (const file of [topologyPath, productionDocPath, campaignPath]) {
 
 const topology = fs.readFileSync(topologyPath, 'utf8');
 const productionDoc = fs.readFileSync(productionDocPath, 'utf8');
+const productionDocNormalized = productionDoc.replace(/\s+/g, ' ');
 const campaign = JSON.parse(fs.readFileSync(campaignPath, 'utf8'));
 
 function requirePattern(text, pattern, message) {
@@ -69,7 +70,7 @@ for (const phrase of [
   'loss of **one** laptop/site',
   'asymmetric private-mesh partition',
 ]) {
-  if (!productionDoc.includes(phrase)) fail(`production boundary missing required statement: ${phrase}`);
+  if (!productionDocNormalized.includes(phrase)) fail(`production boundary missing required statement: ${phrase}`);
 }
 
 const requiredScenarios = new Set([
