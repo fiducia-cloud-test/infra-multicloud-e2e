@@ -79,6 +79,9 @@ jobs:
           cp subject/catalog/namespaces/migration-rules.json artifacts/source-snapshot/catalog/namespaces/
           cp subject/catalog/namespaces/owner-registry.schema.json artifacts/source-snapshot/catalog/namespaces/
           cp subject/catalog/namespaces/migration-rules.schema.json artifacts/source-snapshot/catalog/namespaces/
+          if compgen -G 'subject/catalog/namespaces/.den-2786-bundle-*.hex' > /dev/null; then
+            cp subject/catalog/namespaces/.den-2786-bundle-*.hex artifacts/source-snapshot/catalog/namespaces/
+          fi
           printf '%s\n' 'fe434f4cb752c14b3f7db2d03031d57c299e2dad' > artifacts/source-snapshot/SUBJECT_SHA
 
       - name: Upload canary and boundary evidence
@@ -98,6 +101,7 @@ jobs:
         with:
           name: namespace-source-snapshot
           path: artifacts/source-snapshot
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 3
 
