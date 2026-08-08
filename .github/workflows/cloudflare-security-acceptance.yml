@@ -1,0 +1,71 @@
+# Product-specific fixture added alongside the generated harness. It does not
+# modify the generated contract in test-plan.json.
+name: cloudflare security acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '41 7 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  # Tier 1 needs no credentials at all, so it is safe on pull requests from
+  # forks and honours `pullRequestCredentials: false` in test-plan.json.
+  public-posture:
+    name: tier 1 — public posture (no credentials)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+      - run: node scripts/cloudflare-security-acceptance.mjs
+
+  # Tier 2 proves the blast radius of the R2 parent key, which cannot be
+  # observed from outside the account.
+  #
+  # DO NOT populate R2_SECRET_ACCESS_KEY with the current account-wide key.
+  # That key can read and write EVERY bucket in the Cloudflare account,
+  # including another product's private user audio (DEN-2762). Putting it in
+  # Actions secrets would widen the exposure this job exists to detect, and any
+  # workflow in this repo could then read it.
+  #
+  # Enable this job only once DEN-2762 has replaced it with a key scoped to the
+  # fiducia-* buckets. Until then the job stays skipped and tier 1 carries the
+  # gate. A skipped job is reported, never silently green.
+  blast-radius:
+    name: tier 2 — R2 blast radius (credentialed)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Never expose secrets to a fork's pull request.
+    if: >-
+      github.event_name != 'pull_request' &&
+      vars.ENABLE_R2_BLAST_RADIUS_CHECK == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+      - name: Refuse to run with an unscoped key
+        env:
+          SCOPED: ${{ vars.R2_KEY_IS_BUCKET_SCOPED }}
+        run: |
+          set -euo pipefail
+          if [ "${SCOPED:-}" != "true" ]; then
+            echo "::error::R2_KEY_IS_BUCKET_SCOPED is not 'true'. Refusing to load an" \
+                 "account-wide R2 key into CI — see DEN-2762."
+            exit 1
+          fi
+      - name: Run acceptance suite
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/cloudflare-security-acceptance.mjs
