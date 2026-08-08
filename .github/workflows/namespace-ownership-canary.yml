@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ORESoftware/k8s-cluster
-          ref: a12c36a2f5ceaaaec27e1279fb6ff9ef5f26e7e4
+          ref: fe434f4cb752c14b3f7db2d03031d57c299e2dad
           path: subject
           persist-credentials: false
           show-progress: false
@@ -59,6 +59,15 @@ jobs:
             --format json \
             > artifacts/namespace-ownership-canary.json
 
+      - name: Stage review snapshot
+        run: |
+          mkdir -p artifacts/source-snapshot/tools artifacts/source-snapshot/catalog/namespaces
+          cp subject/tools/namespace_migration.py artifacts/source-snapshot/tools/
+          cp subject/tools/test_namespace_migration.py artifacts/source-snapshot/tools/
+          cp subject/catalog/namespaces/owners.json artifacts/source-snapshot/catalog/namespaces/
+          cp subject/catalog/namespaces/migration-rules.json artifacts/source-snapshot/catalog/namespaces/
+          printf '%s\n' 'fe434f4cb752c14b3f7db2d03031d57c299e2dad' > artifacts/source-snapshot/SUBJECT_SHA
+
       - name: Upload metadata-only canary evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -67,3 +76,12 @@ jobs:
           path: artifacts/namespace-ownership-canary.json
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload exact source snapshot for independent review
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: namespace-source-snapshot
+          path: artifacts/source-snapshot
+          if-no-files-found: error
+          retention-days: 3
