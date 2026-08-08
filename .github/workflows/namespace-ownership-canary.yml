@@ -7,6 +7,7 @@ on:
       - '.github/workflows/namespace-ownership-canary.yml'
       - 'scripts/namespace-ownership-canary.py'
       - 'scripts/namespace-scanner-boundary-audit.py'
+      - 'patches/den-2926-scanner-boundaries.patch'
   workflow_dispatch:
 
 permissions:
@@ -20,7 +21,7 @@ jobs:
   validate:
     name: exact-head contract from fiducia-cloud-test
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out canary without credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,7 +62,7 @@ jobs:
             --format json \
             > artifacts/namespace-ownership-canary.json
 
-      - name: Audit scanner token boundaries
+      - name: Audit scanner token boundaries at the unmodified source head
         id: boundary
         continue-on-error: true
         run: |
@@ -69,6 +70,120 @@ jobs:
             --subject subject \
             --format json \
             > artifacts/namespace-scanner-boundary-audit.json
+
+      - name: Apply the reviewed DEN-2926 patch in an isolated worktree
+        run: |
+          git -C subject worktree add --detach ../subject-patched HEAD
+          git -C subject-patched apply --check ../patches/den-2926-scanner-boundaries.patch
+          git -C subject-patched apply ../patches/den-2926-scanner-boundaries.patch
+          git -C subject-patched diff --check
+
+      - name: Prove the patched scanner and source tests
+        run: |
+          python3 -m py_compile \
+            subject-patched/tools/namespace_migration.py \
+            subject-patched/tools/test_namespace_migration.py
+          python3 subject-patched/tools/test_namespace_migration.py
+          python3 scripts/namespace-scanner-boundary-audit.py \
+            --subject subject-patched \
+            --format json \
+            > artifacts/namespace-scanner-boundary-patched.json
+          python3 subject-patched/tools/namespace_migration.py check \
+            --root subject-patched \
+            --format json \
+            > artifacts/namespace-contract-patched.json
+
+      - name: Generate exact before and after inventories
+        run: |
+          python3 subject/tools/namespace_migration.py inventory \
+            --root subject \
+            --format json \
+            > artifacts/namespace-inventory-before.json
+          python3 subject-patched/tools/namespace_migration.py inventory \
+            --root subject-patched \
+            --format json \
+            > artifacts/namespace-inventory-after.json
+
+      - name: Quantify corrected inventory deltas
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          artifacts = Path('artifacts')
+          before = json.loads((artifacts / 'namespace-inventory-before.json').read_text())
+          after = json.loads((artifacts / 'namespace-inventory-after.json').read_text())
+          patched_boundary = json.loads(
+              (artifacts / 'namespace-scanner-boundary-patched.json').read_text()
+          )
+          patched_contract = json.loads(
+              (artifacts / 'namespace-contract-patched.json').read_text()
+          )
+
+          def identity(item):
+              return (
+                  item['path'],
+                  item['line'],
+                  item['column'],
+                  item['system'],
+                  item['reference'],
+              )
+
+          before_items = {identity(item): item for item in before['occurrences']}
+          after_items = {identity(item): item for item in after['occurrences']}
+          removed = [before_items[key] for key in sorted(before_items.keys() - after_items.keys())]
+          added = [after_items[key] for key in sorted(after_items.keys() - before_items.keys())]
+
+          before_summary = before['summary']
+          after_summary = after['summary']
+          systems = sorted(
+              set(before_summary.get('bySystem', {}))
+              | set(after_summary.get('bySystem', {}))
+          )
+          delta = {
+              'valid': (
+                  before.get('valid')
+                  and after.get('valid')
+                  and patched_boundary.get('valid')
+                  and patched_contract.get('valid')
+                  and after_summary['total'] < before_summary['total']
+              ),
+              'subjectSha': 'fe434f4cb752c14b3f7db2d03031d57c299e2dad',
+              'patchSha256': '6ef14b922189f1d5e7ab18f55a386a117c6dbdabced9f37e82b76fcaaf81242c',
+              'before': before_summary,
+              'after': after_summary,
+              'delta': {
+                  'total': after_summary['total'] - before_summary['total'],
+                  'distinctReferences': (
+                      after_summary['distinctReferences']
+                      - before_summary['distinctReferences']
+                  ),
+                  'unclassifiedActive': (
+                      after_summary['unclassifiedActive']
+                      - before_summary['unclassifiedActive']
+                  ),
+                  'bySystem': {
+                      name: (
+                          after_summary.get('bySystem', {}).get(name, 0)
+                          - before_summary.get('bySystem', {}).get(name, 0)
+                      )
+                      for name in systems
+                  },
+              },
+              'removedOccurrenceCount': len(removed),
+              'addedOccurrenceCount': len(added),
+              'removedSamples': removed[:50],
+              'addedSamples': added[:50],
+              'patchedBoundary': patched_boundary,
+              'patchedContractDiagnostics': patched_contract.get('diagnostics', []),
+          }
+          (artifacts / 'namespace-inventory-delta.json').write_text(
+              json.dumps(delta, indent=2, sort_keys=True) + '\n'
+          )
+          if not delta['valid']:
+              raise SystemExit('patched inventory proof is not valid')
+          print(json.dumps(delta['delta'], indent=2, sort_keys=True))
+          PY
 
       - name: Stage review snapshot
         run: |
@@ -84,7 +199,7 @@ jobs:
           fi
           printf '%s\n' 'fe434f4cb752c14b3f7db2d03031d57c299e2dad' > artifacts/source-snapshot/SUBJECT_SHA
 
-      - name: Upload canary and boundary evidence
+      - name: Upload canary, boundary, and corrected-inventory evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -92,6 +207,11 @@ jobs:
           path: |
             artifacts/namespace-ownership-canary.json
             artifacts/namespace-scanner-boundary-audit.json
+            artifacts/namespace-scanner-boundary-patched.json
+            artifacts/namespace-contract-patched.json
+            artifacts/namespace-inventory-before.json
+            artifacts/namespace-inventory-after.json
+            artifacts/namespace-inventory-delta.json
           if-no-files-found: error
           retention-days: 14
 
@@ -105,8 +225,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      - name: Enforce scanner token boundaries
+      - name: Enforce scanner token boundaries at the source head
         if: ${{ steps.boundary.outcome == 'failure' }}
         run: |
-          echo 'The subject scanner truncated one or more longer tokens; inspect the uploaded boundary audit.' >&2
+          echo 'The unmodified source head still truncates longer tokens; inspect the uploaded before/after evidence.' >&2
           exit 1
