@@ -235,6 +235,8 @@ async function listBucket(creds, bucket) {
 
 // ---------------------------------------------------------------- tier 2
 
+// Returns true when the parent key proved to be bucket-scoped, which changes
+// what the scoped-credential checks below are allowed to expect.
 async function tier2BlastRadius(creds) {
   // Positive control first: if the key cannot read its own buckets, the
   // credentials are broken and the denials below would be meaningless.
@@ -242,18 +244,23 @@ async function tier2BlastRadius(creds) {
   if (own !== 200) {
     fail("2", "R2 parent key can read fiducia buckets",
          `HTTP ${own} on ${FIDUCIA_BUCKETS[0]} — credentials invalid, denial results below are not meaningful`);
-    return;
+    return false;
   }
   pass("2", "R2 parent key can read fiducia buckets", `HTTP 200 on ${FIDUCIA_BUCKETS[0]}`);
 
   // DEN-2762. Fiducia credentials must not reach another product's storage.
+  let scoped = true;
   for (const b of FOREIGN_BUCKETS) {
     const code = await listBucket(creds, b);
-    code === 403 || code === 401
-      ? pass("2", `R2 key denied on foreign bucket: ${b}`, `HTTP ${code}`)
-      : fail("2", `R2 key denied on foreign bucket: ${b}`,
-             `HTTP ${code} — fiducia credentials reach another product's object storage (DEN-2762)`);
+    if (code === 403 || code === 401) {
+      pass("2", `R2 key denied on foreign bucket: ${b}`, `HTTP ${code}`);
+    } else {
+      scoped = false;
+      fail("2", `R2 key denied on foreign bucket: ${b}`,
+           `HTTP ${code} — fiducia credentials reach another product's object storage (DEN-2762)`);
+    }
   }
+  return scoped;
 }
 
 async function mintScoped(creds, bucket, permission) {
