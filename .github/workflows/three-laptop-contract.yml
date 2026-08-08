@@ -29,3 +29,6 @@ jobs:
 
       - name: Validate three independent synthetic provider clusters
         run: node scripts/three-laptop-contract.mjs _src/fiducia-infra
+
+      - name: Shell syntax check physical preflight
+        run: bash -n scripts/three-laptop-physical-preflight.sh
