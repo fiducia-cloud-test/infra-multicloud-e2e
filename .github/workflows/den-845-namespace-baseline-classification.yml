@@ -1,4 +1,4 @@
-name: DEN-845 namespace baseline classification
+name: DEN-845 namespace manifest refresh candidate
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: den-845-namespace-baseline-${{ github.workflow }}-${{ github.ref }}
+  group: den-845-namespace-refresh-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -20,10 +20,10 @@ env:
   K8S_HEAD_SHA: 664ea2fa106168e7e62ab70adb5719d54f59e9c4
 
 jobs:
-  classify:
-    name: Exact base/head namespace debt classification
+  generate:
+    name: Exact-head deterministic manifest refresh
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Check out independent test harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,21 +51,35 @@ jobs:
           git -C _src/k8s-cluster cat-file -e "${K8S_BASE_SHA}^{commit}"
           python3 -m py_compile scripts/k8s-namespace-baseline-classification.py
 
-      - name: Compare inherited manifest debt and run new-debt ratchet
+      - name: Reproduce production gate and render validated replacement
         env:
-          EVIDENCE_PATH: ${{ runner.temp }}/den-845-namespace-baseline-classification.json
+          EVIDENCE_PATH: ${{ runner.temp }}/den-845-namespace-manifest-refresh.json
+          CANDIDATE_PATH: ${{ runner.temp }}/migration-manifest.head-664ea2f.json
         run: >-
           python3 scripts/k8s-namespace-baseline-classification.py
           --source _src/k8s-cluster
           --base "${K8S_BASE_SHA}"
           --head "${K8S_HEAD_SHA}"
           --evidence "${EVIDENCE_PATH}"
+          --candidate "${CANDIDATE_PATH}"
 
-      - name: Upload metadata-only classification evidence
+      - name: Parse generated outputs
+        shell: bash
+        env:
+          EVIDENCE_PATH: ${{ runner.temp }}/den-845-namespace-manifest-refresh.json
+          CANDIDATE_PATH: ${{ runner.temp }}/migration-manifest.head-664ea2f.json
+        run: |
+          set -euo pipefail
+          python3 -m json.tool "${EVIDENCE_PATH}" >/dev/null
+          python3 -m json.tool "${CANDIDATE_PATH}" >/dev/null
+
+      - name: Upload metadata-only evidence and validated candidate
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: den-845-namespace-baseline-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/den-845-namespace-baseline-classification.json
+          name: den-845-namespace-manifest-refresh-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/den-845-namespace-manifest-refresh.json
+            ${{ runner.temp }}/migration-manifest.head-664ea2f.json
           if-no-files-found: warn
           retention-days: 14
