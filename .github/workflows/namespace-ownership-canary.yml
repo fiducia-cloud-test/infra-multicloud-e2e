@@ -119,8 +119,12 @@ jobs:
 
           generated = json.loads(Path('artifacts/namespace-inventory-fixed.json').read_text())
           committed = json.loads(Path('subject/artifacts/namespace-inventory.json').read_text())
+          # The scanner intentionally records the absolute checkout root. Normalize only
+          # that environment-specific provenance field; all findings remain exact.
+          generated['generatedFrom']['root'] = '<checkout-root>'
+          committed['generatedFrom']['root'] = '<checkout-root>'
           if generated != committed:
-              raise SystemExit('committed fixed inventory does not match exact-head regeneration')
+              raise SystemExit('committed fixed inventory differs beyond checkout-root provenance')
           PY
 
       - name: Quantify corrected inventory deltas
