@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/namespace-ownership-canary.yml'
       - 'scripts/namespace-ownership-canary.py'
+      - 'scripts/namespace-scanner-boundary-audit.py'
   workflow_dispatch:
 
 permissions:
@@ -44,7 +45,8 @@ jobs:
             subject/tools/test_namespace_migration.py \
             subject/tools/namespace_test_owner_contract.py \
             subject/tools/test_namespace_test_owner_contract.py \
-            scripts/namespace-ownership-canary.py
+            scripts/namespace-ownership-canary.py \
+            scripts/namespace-scanner-boundary-audit.py
 
       - name: Run source namespace tests
         run: |
@@ -59,6 +61,15 @@ jobs:
             --format json \
             > artifacts/namespace-ownership-canary.json
 
+      - name: Audit scanner token boundaries
+        id: boundary
+        continue-on-error: true
+        run: |
+          python3 scripts/namespace-scanner-boundary-audit.py \
+            --subject subject \
+            --format json \
+            > artifacts/namespace-scanner-boundary-audit.json
+
       - name: Stage review snapshot
         run: |
           mkdir -p artifacts/source-snapshot/tools artifacts/source-snapshot/catalog/namespaces
@@ -66,14 +77,18 @@ jobs:
           cp subject/tools/test_namespace_migration.py artifacts/source-snapshot/tools/
           cp subject/catalog/namespaces/owners.json artifacts/source-snapshot/catalog/namespaces/
           cp subject/catalog/namespaces/migration-rules.json artifacts/source-snapshot/catalog/namespaces/
+          cp subject/catalog/namespaces/owner-registry.schema.json artifacts/source-snapshot/catalog/namespaces/
+          cp subject/catalog/namespaces/migration-rules.schema.json artifacts/source-snapshot/catalog/namespaces/
           printf '%s\n' 'fe434f4cb752c14b3f7db2d03031d57c299e2dad' > artifacts/source-snapshot/SUBJECT_SHA
 
-      - name: Upload metadata-only canary evidence
+      - name: Upload canary and boundary evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: namespace-ownership-canary
-          path: artifacts/namespace-ownership-canary.json
+          path: |
+            artifacts/namespace-ownership-canary.json
+            artifacts/namespace-scanner-boundary-audit.json
           if-no-files-found: error
           retention-days: 14
 
@@ -85,3 +100,9 @@ jobs:
           path: artifacts/source-snapshot
           if-no-files-found: error
           retention-days: 3
+
+      - name: Enforce scanner token boundaries
+        if: ${{ steps.boundary.outcome == 'failure' }}
+        run: |
+          echo 'The subject scanner truncated one or more longer tokens; inspect the uploaded boundary audit.' >&2
+          exit 1
