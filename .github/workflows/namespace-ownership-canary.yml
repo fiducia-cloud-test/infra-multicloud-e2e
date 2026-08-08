@@ -39,11 +39,11 @@ jobs:
           show-progress: false
           submodules: false
 
-      - name: Check out exact refined subject
+      - name: Check out exact merged Phase 0 subject
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ORESoftware/k8s-cluster
-          ref: f3cf41015c9b99a0de31d1056224c8eea2e1bbb6
+          ref: 276eb2f1f2990822de2ffb45516cb6a8d19697cf
           path: subject
           persist-credentials: false
           show-progress: false
@@ -78,7 +78,7 @@ jobs:
             --format json \
             > artifacts/namespace-scanner-boundary-before.json
 
-      - name: Require refined token and template boundaries
+      - name: Require merged token and template boundaries
         run: |
           python3 scripts/namespace-scanner-boundary-audit.py \
             --subject subject \
@@ -140,15 +140,15 @@ jobs:
           contract = json.loads((artifacts / 'namespace-contract-fixed.json').read_text())
 
           if fixed != committed:
-              raise SystemExit('committed refined inventory is not exact-head reproducible')
+              raise SystemExit('committed merged inventory is not exact-head reproducible')
           if fixed.get('generatedFrom', {}).get('root') != '.':
               raise SystemExit('inventory root provenance is environment-specific')
           if any(item['path'].startswith('artifacts/') for item in fixed['occurrences']):
               raise SystemExit('inventory recursively scanned committed evidence')
           if not boundary.get('valid') or not contract.get('valid'):
-              raise SystemExit('refined boundary or contract evidence is not valid')
+              raise SystemExit('merged boundary or contract evidence is not valid')
           if contract.get('diagnostics'):
-              raise SystemExit('refined contract still has diagnostics')
+              raise SystemExit('merged contract still has diagnostics')
 
           def identity(item):
               return (
@@ -188,13 +188,13 @@ jobs:
               },
           }
           if summary != expected_summary:
-              raise SystemExit('refined exact-head summary differs from approved counts')
+              raise SystemExit('merged exact-head summary differs from approved counts')
           if len(removed) != 405 or added:
-              raise SystemExit('refined exact occurrence delta is not 405 removals / 0 additions')
+              raise SystemExit('merged exact occurrence delta is not 405 removals / 0 additions')
           if committed_delta['before'] != before['summary']:
               raise SystemExit('committed baseline summary is stale')
           if committed_delta['after'] != summary:
-              raise SystemExit('committed refined summary is stale')
+              raise SystemExit('committed merged summary is stale')
           if committed_delta['removedOccurrenceCount'] != 405:
               raise SystemExit('committed removed count is stale')
           if committed_delta['addedOccurrenceCount'] != 0:
@@ -204,7 +204,7 @@ jobs:
           report = {
               'valid': True,
               'beforeSha': 'fe434f4cb752c14b3f7db2d03031d57c299e2dad',
-              'fixedSha': 'f3cf41015c9b99a0de31d1056224c8eea2e1bbb6',
+              'fixedSha': '276eb2f1f2990822de2ffb45516cb6a8d19697cf',
               'before': before['summary'],
               'fixed': summary,
               'delta': {
