@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detect token-prefix truncation in the DEN-2786 namespace scanner."""
+"""Detect token-prefix truncation and template-boundary loss in DEN-2926."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,25 @@ def reference_dict(item: Any) -> dict[str, Any]:
         "value": item.value,
         "column": item.column,
     }
+
+
+def exact_check(
+    checks: list[dict[str, Any]],
+    *,
+    name: str,
+    line: str,
+    actual: list[dict[str, Any]],
+    expected: list[dict[str, Any]],
+) -> None:
+    checks.append(
+        {
+            "name": name,
+            "line": line,
+            "expected": expected,
+            "actual": actual,
+            "valid": actual == expected,
+        }
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -35,54 +54,45 @@ def main(argv: Sequence[str] | None = None) -> int:
         "checkout=/srv/dd-next",
         "checkout=/home/ec2-user/codes/dd-next-1",
         "module github.com/oresoftware/dd-next-1/remote/service",
+        "package com.oresoftware.ddnext.service",
     ):
         references = scan_line(line)
-        checks.append(
-            {
-                "name": "reject-prefix-truncation",
-                "line": line,
-                "expected": [],
-                "actual": [reference_dict(item) for item in references],
-                "valid": not references,
-            }
+        exact_check(
+            checks,
+            name="reject-prefix-truncation",
+            line=line,
+            expected=[],
+            actual=[reference_dict(item) for item in references],
         )
 
     metadata_line = 'labels: {"dd/threadIdentifier": "abc"}'
-    metadata_actual = [reference_dict(item) for item in scan_line(metadata_line)]
-    metadata_expected = [
-        {
-            "system": "slash-namespace",
-            "value": "dd/threadIdentifier",
-            "column": metadata_line.index("dd/threadIdentifier") + 1,
-        }
-    ]
-    checks.append(
-        {
-            "name": "preserve-longer-legacy-token",
-            "line": metadata_line,
-            "expected": metadata_expected,
-            "actual": metadata_actual,
-            "valid": metadata_actual == metadata_expected,
-        }
+    exact_check(
+        checks,
+        name="preserve-longer-legacy-token",
+        line=metadata_line,
+        actual=[reference_dict(item) for item in scan_line(metadata_line)],
+        expected=[
+            {
+                "system": "slash-namespace",
+                "value": "dd/threadIdentifier",
+                "column": metadata_line.index("dd/threadIdentifier") + 1,
+            }
+        ],
     )
 
     package_line = "require github.com/oresoftware/dd/libs/telemetry-go v0.0.0"
-    package_actual = [reference_dict(item) for item in scan_line(package_line)]
-    package_expected = [
-        {
-            "system": "source-package",
-            "value": "github.com/oresoftware/dd/libs/telemetry-go",
-            "column": package_line.index("github.com") + 1,
-        }
-    ]
-    checks.append(
-        {
-            "name": "preserve-real-source-package",
-            "line": package_line,
-            "expected": package_expected,
-            "actual": package_actual,
-            "valid": package_actual == package_expected,
-        }
+    exact_check(
+        checks,
+        name="preserve-real-source-package",
+        line=package_line,
+        actual=[reference_dict(item) for item in scan_line(package_line)],
+        expected=[
+            {
+                "system": "source-package",
+                "value": "github.com/oresoftware/dd/libs/telemetry-go",
+                "column": package_line.index("github.com") + 1,
+            }
+        ],
     )
 
     host_line = (
@@ -106,6 +116,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
     )
 
+    templated_host = 'path = "/home/ec2-user/codes/dd/thread-workspaces/{name}"'
+    exact_check(
+        checks,
+        name="preserve-templated-host-owner-prefix",
+        line=templated_host,
+        actual=[reference_dict(item) for item in scan_line(templated_host)],
+        expected=[
+            {
+                "system": "host-path",
+                "value": "/home/ec2-user/codes/dd/thread-workspaces",
+                "column": templated_host.index("/home/") + 1,
+            }
+        ],
+    )
+
+    templated_package = 'module = "github.com/oresoftware/dd/libs/{generated}"'
+    exact_check(
+        checks,
+        name="preserve-templated-package-owner-prefix",
+        line=templated_package,
+        actual=[reference_dict(item) for item in scan_line(templated_package)],
+        expected=[
+            {
+                "system": "source-package",
+                "value": "github.com/oresoftware/dd/libs",
+                "column": templated_package.index("github.com") + 1,
+            }
+        ],
+    )
+
     failures = [item for item in checks if not item["valid"]]
     report = {
         "valid": not failures,
@@ -114,8 +154,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "failureCount": len(failures),
         "failureNames": [item["name"] for item in failures],
         "policy": (
-            "A scanner may match a real legacy token or the full longer legacy token, "
-            "but it may not truncate a hyphenated sibling, repository name, or metadata name."
+            "Reject legacy prefixes inside longer sibling tokens, while preserving the "
+            "full owner-bearing prefix before runtime template segments."
         ),
     }
 
