@@ -1,0 +1,149 @@
+--- a/tools/namespace_migration.py
++++ b/tools/namespace_migration.py
+@@ -35,13 +35,60 @@
+     ".github/workflows/namespace-migration-contract.yml",
+ )
+ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+-    ("metadata-key", re.compile(r"(?<![A-Za-z0-9_.-])dd/(?:threadId|userId)")),
+-    ("metadata-key", re.compile(r"(?<![A-Za-z0-9_.-])dd\.dev/[A-Za-z0-9][A-Za-z0-9._~-]*")),
+-    ("source-package", re.compile(r"(?<![A-Za-z0-9_.-])github\.com/oresoftware/dd(?:/[A-Za-z0-9._~:@%+,/-]+)*", re.I)),
+-    ("source-package", re.compile(r"(?<![A-Za-z0-9_.-])com\.oresoftware\.dd(?:\.[A-Za-z0-9_]+)*")),
+-    ("generated-package", re.compile(r"(?<![A-Za-z0-9_.-])(?:dd_pg_defs|dd\.pgdefs)(?:[A-Za-z0-9_.-]*)?")),
+-    ("host-path", re.compile(r"(?:/opt/dd|/var/lib/dd|/srv/dd|/home/[A-Za-z0-9._-]+/codes/dd)(?:/[A-Za-z0-9._~:@%+,=-]+)*")),
+-    ("slash-namespace", re.compile(r"(?<![A-Za-z0-9_.-])dd/[A-Za-z0-9][A-Za-z0-9._~:@%+,/=-]*")),
++    (
++        "metadata-key",
++        re.compile(
++            r"(?<![A-Za-z0-9_.-])dd/(?:threadId|userId)"
++            r"(?![A-Za-z0-9._~/-])"
++        ),
++    ),
++    (
++        "metadata-key",
++        re.compile(
++            r"(?<![A-Za-z0-9_.-])dd\.dev/[A-Za-z0-9][A-Za-z0-9._~-]*"
++            r"(?![A-Za-z0-9._~/-])"
++        ),
++    ),
++    (
++        "source-package",
++        re.compile(
++            r"(?<![A-Za-z0-9_.-])github\.com/oresoftware/dd"
++            r"(?:/[A-Za-z0-9._~:@%+,-]+)*"
++            r"(?![A-Za-z0-9._~:@%+=-])",
++            re.I,
++        ),
++    ),
++    (
++        "source-package",
++        re.compile(
++            r"(?<![A-Za-z0-9_.-])com\.oresoftware\.dd"
++            r"(?:\.[A-Za-z0-9_]+)*"
++            r"(?![A-Za-z0-9_.-])"
++        ),
++    ),
++    (
++        "generated-package",
++        re.compile(
++            r"(?<![A-Za-z0-9_.-])(?:dd_pg_defs|dd\.pgdefs)"
++            r"(?:[A-Za-z0-9_.-]*)?"
++        ),
++    ),
++    (
++        "host-path",
++        re.compile(
++            r"(?:/opt/dd|/var/lib/dd|/srv/dd|"
++            r"/home/[A-Za-z0-9._-]+/codes/dd)"
++            r"(?:/[A-Za-z0-9._~:@%+,=-]+)*"
++            r"(?![A-Za-z0-9._~@%+=-])"
++        ),
++    ),
++    (
++        "slash-namespace",
++        re.compile(
++            r"(?<![A-Za-z0-9_.-])dd/"
++            r"[A-Za-z0-9][A-Za-z0-9._~:@%+,/=-]*"
++        ),
++    ),
+ )
+ TRAILING = ".,;:)]}>'\"`"
+ 
+--- a/tools/test_namespace_migration.py
++++ b/tools/test_namespace_migration.py
+@@ -209,6 +209,76 @@
+         references = scan_line("- secret: `dd/remote-dev/gha-clone-server-secrets`,")
+         self.assertEqual("dd/remote-dev/gha-clone-server-secrets", references[0].value)
+ 
++    def test_scanner_does_not_truncate_hyphenated_host_siblings(self) -> None:
++        for line in (
++            "WORKDIR /opt/dd-akka-ws-server",
++            "cache=/var/lib/dd-cache",
++            "checkout=/srv/dd-next",
++            "checkout=/home/ec2-user/codes/dd-next-1",
++        ):
++            with self.subTest(line=line):
++                self.assertEqual([], scan_line(line))
++
++    def test_scanner_does_not_truncate_repository_owner_prefix(self) -> None:
++        self.assertEqual(
++            [],
++            scan_line("module github.com/oresoftware/dd-next-1/remote/service"),
++        )
++        references = scan_line(
++            "require github.com/oresoftware/dd/libs/telemetry-go v0.0.0"
++        )
++        self.assertEqual(1, len(references))
++        self.assertEqual(
++            "github.com/oresoftware/dd/libs/telemetry-go",
++            references[0].value,
++        )
++
++    def test_scanner_does_not_truncate_reverse_dns_package_prefix(self) -> None:
++        self.assertEqual([], scan_line("package com.oresoftware.ddnext.service"))
++        references = scan_line("package com.oresoftware.dd.runtime")
++        self.assertEqual(1, len(references))
++        self.assertEqual("com.oresoftware.dd.runtime", references[0].value)
++
++    def test_scanner_does_not_misclassify_longer_metadata_name(self) -> None:
++        references = scan_line('labels: {"dd/threadIdentifier": "abc"}')
++        self.assertEqual(1, len(references))
++        self.assertEqual("slash-namespace", references[0].system)
++        self.assertEqual("dd/threadIdentifier", references[0].value)
++
++    def test_scanner_does_not_truncate_dd_dev_metadata_name(self) -> None:
++        self.assertEqual([], scan_line('annotations: {"dd.dev/fiducia-key/child": "1"}'))
++        references = scan_line('annotations: {"dd.dev/fiducia-key": "1"}')
++        self.assertEqual(1, len(references))
++        self.assertEqual("dd.dev/fiducia-key", references[0].value)
++
++    def test_scanner_keeps_real_host_subpaths(self) -> None:
++        references = scan_line(
++            "install=/opt/dd/bin/bootstrap-cluster.sh "
++            "state=/var/lib/dd/nats "
++            "repo=/home/ec2-user/codes/dd/dd-next-1 "
++            'template="/home/ec2-user/codes/dd/thread-workspaces/{name}"'
++        )
++        self.assertEqual(
++            [
++                "/opt/dd/bin/bootstrap-cluster.sh",
++                "/var/lib/dd/nats",
++                "/home/ec2-user/codes/dd/dd-next-1",
++                "/home/ec2-user/codes/dd/thread-workspaces",
++            ],
++            [item.value for item in references],
++        )
++
++    def test_scanner_keeps_source_package_before_template_segment(self) -> None:
++        references = scan_line(
++            'module = "github.com/oresoftware/dd/libs/{generated}"'
++        )
++        self.assertEqual(1, len(references))
++        self.assertEqual("source-package", references[0].system)
++        self.assertEqual(
++            "github.com/oresoftware/dd/libs",
++            references[0].value,
++        )
++
+ 
+ class RepositoryInventoryTests(unittest.TestCase):
+     def setUp(self) -> None:
