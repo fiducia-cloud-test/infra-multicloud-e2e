@@ -287,7 +287,7 @@ async function mintScoped(creds, bucket, permission) {
   };
 }
 
-async function tier2ScopedCredsEnforced(creds) {
+async function tier2ScopedCredsEnforced(creds, parentIsScoped) {
   if (!creds.apiToken) {
     skip("2", "scoped credentials enforce bucket scope", "CLOUDFLARE_API_TOKEN not set");
     return;
@@ -295,8 +295,16 @@ async function tier2ScopedCredsEnforced(creds) {
   const target = "fiducia-logs-prod";
   const scoped = await mintScoped(creds, target, "object-read-only");
   if (!scoped) {
-    fail("2", "scoped credentials can be minted",
-         "temp-access-credentials refused — the DEN-2762 mitigation is unavailable");
+    // `r2/temp-access-credentials` needs an ACCOUNT-LEVEL R2 permission, which a
+    // correctly bucket-scoped parent key deliberately does not have. So this
+    // failing is only a problem when the parent is still account-wide -- there,
+    // temp credentials are the mitigation and their absence leaves nothing
+    // between a leaked key and every bucket in the account.
+    parentIsScoped
+      ? record("2", "scoped credentials can be minted", "known-open",
+               "unavailable because the parent key is bucket-scoped, which is the stronger control — expected")
+      : fail("2", "scoped credentials can be minted",
+             "temp-access-credentials refused while the parent key is account-wide — no mitigation available (DEN-2762)");
     return;
   }
   pass("2", "scoped credentials can be minted", target);
