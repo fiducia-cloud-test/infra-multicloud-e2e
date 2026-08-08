@@ -8,6 +8,7 @@ const productionDocPath = path.join(sourceDir, 'docs', 'laptop-k3s-production.md
 const campaignPath = path.join(sourceDir, 'acceptance', 'laptop-fleet', 'campaign.json');
 
 function fail(message) {
+  console.error(`::error title=DEN-3008 contract failure::${message}`);
   console.error(`DEN-3008 contract failure: ${message}`);
   process.exit(1);
 }
