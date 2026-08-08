@@ -1,0 +1,180 @@
+# Independent exact-head validation for the DEN-2949 plaintext manifest.
+name: namespace plaintext manifest canary
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/namespace-manifest-canary.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: namespace-manifest-canary-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: exact-head plaintext manifest from fiducia-cloud-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out canary without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Check out exact public k8s-cluster manifest head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/k8s-cluster
+          ref: d742269474f844236492f9185a5640f193ea9817
+          path: subject
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Assert exact source and absence of staging transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C subject rev-parse HEAD)" = \
+            'd742269474f844236492f9185a5640f193ea9817'
+          test ! -e subject/.github/transport/den-2786-manifest-source.tar.xz
+          test ! -e subject/.github/workflows/den-2786-materialize-manifest.yml
+          test -z "$(find subject/catalog/namespaces -maxdepth 1 -type f -name '.den-2786-bundle-*.hex' -print -quit)"
+
+      - name: Compile namespace source and tests
+        run: |
+          python3 -m py_compile \
+            subject/tools/namespace_migration.py \
+            subject/tools/test_namespace_migration.py \
+            subject/tools/namespace_test_owner_contract.py \
+            subject/tools/test_namespace_test_owner_contract.py \
+            subject/tools/namespace_manifest.py \
+            subject/tools/test_namespace_manifest.py
+
+      - name: Run source adversarial suites
+        run: |
+          python3 subject/tools/test_namespace_migration.py
+          python3 subject/tools/test_namespace_test_owner_contract.py
+          python3 subject/tools/test_namespace_manifest.py
+
+      - name: Reproduce inventory and validate manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          python3 subject/tools/namespace_migration.py inventory \
+            --root subject \
+            --format json \
+            > artifacts/namespace-inventory.json
+          python3 subject/tools/namespace_manifest.py check \
+            --root subject \
+            --format json \
+            > artifacts/namespace-manifest-report.json
+          sha256sum \
+            subject/catalog/namespaces/migration-manifest.json \
+            subject/catalog/namespaces/migration-manifest.schema.json \
+            artifacts/namespace-inventory.json \
+            > artifacts/namespace-manifest-canary.sha256
+
+      - name: Verify exact identities and fail-closed controls
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          subject = Path('subject')
+          artifacts = Path('artifacts')
+          inventory = json.loads(
+              (artifacts / 'namespace-inventory.json').read_text(encoding='utf-8')
+          )
+          committed_inventory = json.loads(
+              (subject / 'artifacts/namespace-inventory.json').read_text(
+                  encoding='utf-8'
+              )
+          )
+          report = json.loads(
+              (artifacts / 'namespace-manifest-report.json').read_text(
+                  encoding='utf-8'
+              )
+          )
+          manifest_path = subject / 'catalog/namespaces/migration-manifest.json'
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          schema = json.loads(
+              (
+                  subject
+                  / 'catalog/namespaces/migration-manifest.schema.json'
+              ).read_text(encoding='utf-8')
+          )
+
+          entries = manifest['spec']['entries']
+          inventory_identity = {
+              (
+                  item['path'], item['line'], item['column'],
+                  item['system'], item['reference'],
+              )
+              for item in inventory['occurrences']
+          }
+          manifest_identity = {
+              (
+                  item['source']['path'], item['source']['line'],
+                  item['source']['column'], item['system'], item['current'],
+              )
+              for item in entries
+          }
+          checks = {
+              'exact inventory reproduction': inventory == committed_inventory,
+              'inventory total': inventory['summary']['total'] == 1134,
+              'manifest report valid': report.get('valid') is True,
+              'manifest report entries': report.get('entryCount') == 1134,
+              'inventory report entries': report.get('inventoryEntryCount') == 1134,
+              'one row per identity': inventory_identity == manifest_identity,
+              'no duplicate manifest identities': len(manifest_identity) == 1134,
+              'execution disabled': manifest['spec']['executionAuthorized'] is False,
+              'cleanup disabled': all(
+                  item.get('destructiveCleanupAllowed') is False
+                  for item in entries
+              ),
+              'no diagnostics': report.get('diagnostics') == [],
+              'no encoded staging': report.get('encodedStagingFiles') == [],
+              'strict schema': schema.get('additionalProperties') is False,
+          }
+          failed = [name for name, valid in checks.items() if not valid]
+          if failed:
+              raise SystemExit('plaintext manifest canary failed: ' + ', '.join(failed))
+
+          evidence = {
+              'valid': True,
+              'subjectSha': 'd742269474f844236492f9185a5640f193ea9817',
+              'entryCount': len(entries),
+              'inventorySummary': inventory['summary'],
+              'manifestSha256': hashlib.sha256(
+                  manifest_path.read_bytes()
+              ).hexdigest(),
+              'checks': checks,
+              'credentialsLoaded': [],
+              'providerWrites': [],
+          }
+          (artifacts / 'namespace-manifest-canary.json').write_text(
+              json.dumps(evidence, indent=2, sort_keys=True) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Upload independent manifest evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: namespace-plaintext-manifest-canary
+          path: |
+            artifacts/namespace-manifest-canary.json
+            artifacts/namespace-manifest-report.json
+            artifacts/namespace-inventory.json
+            artifacts/namespace-manifest-canary.sha256
+          if-no-files-found: error
+          retention-days: 14
