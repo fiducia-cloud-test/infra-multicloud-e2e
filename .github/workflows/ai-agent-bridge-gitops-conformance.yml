@@ -1,0 +1,112 @@
+name: DEN-845 AI agent bridge GitOps conformance
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ai-agent-bridge-gitops-conformance.yml'
+      - 'contracts/ai-agent-bridge-run-31264194679.json'
+      - 'docs/ai-agent-bridge-gitops-conformance.md'
+      - 'scripts/ai-agent-bridge-gitops-conformance.mjs'
+      - 'scripts/inspect-ai-agent-bridge-images.sh'
+      - 'test/ai-agent-bridge-gitops-conformance.test.mjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ai-agent-bridge-gitops-conformance.yml'
+      - 'contracts/ai-agent-bridge-run-31264194679.json'
+      - 'docs/ai-agent-bridge-gitops-conformance.md'
+      - 'scripts/ai-agent-bridge-gitops-conformance.mjs'
+      - 'scripts/inspect-ai-agent-bridge-images.sh'
+      - 'test/ai-agent-bridge-gitops-conformance.test.mjs'
+  schedule:
+    - cron: '41 13 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: den-845-ai-agent-bridge-gitops-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    name: Artifact-backed exact-head GitOps conformance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out independent test harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Check out exact Kubernetes repair head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/k8s-cluster
+          ref: 664ea2fa106168e7e62ab70adb5719d54f59e9c4
+          path: _src/k8s-cluster
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Check out exact bridge release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/ai-agent-bridge.rs
+          ref: ec667946b1f8725b6baea8e67ae6a701d602dc04
+          path: _src/ai-agent-bridge
+          fetch-depth: 1
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Verify exact repository and release-workflow identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C _src/k8s-cluster rev-parse HEAD)" = '664ea2fa106168e7e62ab70adb5719d54f59e9c4'
+          test "$(git -C _src/ai-agent-bridge rev-parse HEAD)" = 'ec667946b1f8725b6baea8e67ae6a701d602dc04'
+          test "$(git -C _src/ai-agent-bridge hash-object .github/workflows/container-images.yml)" = 'e5a07260cb4c52b304d8185328cddfac71ee61f7'
+          grep -Fq 'schema_version: 2' _src/ai-agent-bridge/.github/workflows/container-images.yml
+          grep -Fq 'exact_digest_pulled: true' _src/ai-agent-bridge/.github/workflows/container-images.yml
+          grep -Fq 'exact_runtime_contract_verified: true' _src/ai-agent-bridge/.github/workflows/container-images.yml
+
+      - name: Validate harness syntax and adversarial tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/ai-agent-bridge-gitops-conformance.mjs
+          node --check test/ai-agent-bridge-gitops-conformance.test.mjs
+          bash -n scripts/inspect-ai-agent-bridge-images.sh
+          node --test test/ai-agent-bridge-gitops-conformance.test.mjs
+
+      - name: Certify exact GitOps tuple against retained evidence
+        env:
+          EVIDENCE_PATH: ${{ runner.temp }}/ai-agent-bridge-gitops-conformance.json
+        run: >-
+          node scripts/ai-agent-bridge-gitops-conformance.mjs
+          _src/k8s-cluster
+          contracts/ai-agent-bridge-run-31264194679.json
+          "${EVIDENCE_PATH}"
+
+      - name: Pull and inspect exact public runtime images
+        env:
+          RUNTIME_EVIDENCE_PATH: ${{ runner.temp }}/ai-agent-bridge-runtime-images.json
+        run: >-
+          bash scripts/inspect-ai-agent-bridge-images.sh
+          contracts/ai-agent-bridge-run-31264194679.json
+          "${RUNTIME_EVIDENCE_PATH}"
+
+      - name: Upload metadata-only conformance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: den-845-ai-agent-bridge-conformance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ai-agent-bridge-gitops-conformance.json
+            ${{ runner.temp }}/ai-agent-bridge-runtime-images.json
+          if-no-files-found: warn
+          retention-days: 14
