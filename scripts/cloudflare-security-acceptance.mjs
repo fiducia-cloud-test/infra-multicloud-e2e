@@ -235,6 +235,8 @@ async function listBucket(creds, bucket) {
 
 // ---------------------------------------------------------------- tier 2
 
+// Returns true when the parent key proved to be bucket-scoped, which changes
+// what the scoped-credential checks below are allowed to expect.
 async function tier2BlastRadius(creds) {
   // Positive control first: if the key cannot read its own buckets, the
   // credentials are broken and the denials below would be meaningless.
@@ -242,18 +244,23 @@ async function tier2BlastRadius(creds) {
   if (own !== 200) {
     fail("2", "R2 parent key can read fiducia buckets",
          `HTTP ${own} on ${FIDUCIA_BUCKETS[0]} — credentials invalid, denial results below are not meaningful`);
-    return;
+    return false;
   }
   pass("2", "R2 parent key can read fiducia buckets", `HTTP 200 on ${FIDUCIA_BUCKETS[0]}`);
 
   // DEN-2762. Fiducia credentials must not reach another product's storage.
+  let scoped = true;
   for (const b of FOREIGN_BUCKETS) {
     const code = await listBucket(creds, b);
-    code === 403 || code === 401
-      ? pass("2", `R2 key denied on foreign bucket: ${b}`, `HTTP ${code}`)
-      : fail("2", `R2 key denied on foreign bucket: ${b}`,
-             `HTTP ${code} — fiducia credentials reach another product's object storage (DEN-2762)`);
+    if (code === 403 || code === 401) {
+      pass("2", `R2 key denied on foreign bucket: ${b}`, `HTTP ${code}`);
+    } else {
+      scoped = false;
+      fail("2", `R2 key denied on foreign bucket: ${b}`,
+           `HTTP ${code} — fiducia credentials reach another product's object storage (DEN-2762)`);
+    }
   }
+  return scoped;
 }
 
 async function mintScoped(creds, bucket, permission) {
@@ -280,7 +287,7 @@ async function mintScoped(creds, bucket, permission) {
   };
 }
 
-async function tier2ScopedCredsEnforced(creds) {
+async function tier2ScopedCredsEnforced(creds, parentIsScoped) {
   if (!creds.apiToken) {
     skip("2", "scoped credentials enforce bucket scope", "CLOUDFLARE_API_TOKEN not set");
     return;
@@ -288,8 +295,16 @@ async function tier2ScopedCredsEnforced(creds) {
   const target = "fiducia-logs-prod";
   const scoped = await mintScoped(creds, target, "object-read-only");
   if (!scoped) {
-    fail("2", "scoped credentials can be minted",
-         "temp-access-credentials refused — the DEN-2762 mitigation is unavailable");
+    // `r2/temp-access-credentials` needs an ACCOUNT-LEVEL R2 permission, which a
+    // correctly bucket-scoped parent key deliberately does not have. So this
+    // failing is only a problem when the parent is still account-wide -- there,
+    // temp credentials are the mitigation and their absence leaves nothing
+    // between a leaked key and every bucket in the account.
+    parentIsScoped
+      ? record("2", "scoped credentials can be minted", "known-open",
+               "unavailable because the parent key is bucket-scoped, which is the stronger control — expected")
+      : fail("2", "scoped credentials can be minted",
+             "temp-access-credentials refused while the parent key is account-wide — no mitigation available (DEN-2762)");
     return;
   }
   pass("2", "scoped credentials can be minted", target);
@@ -325,8 +340,8 @@ async function main() {
   await tier1Dnssec();
 
   if (creds.accountId && creds.accessKeyId && creds.secretAccessKey) {
-    await tier2BlastRadius(creds);
-    await tier2ScopedCredsEnforced(creds);
+    const parentIsScoped = await tier2BlastRadius(creds);
+    await tier2ScopedCredsEnforced(creds, parentIsScoped);
   } else {
     skip("2", "R2 blast-radius checks",
          "set CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY to run");
