@@ -1,0 +1,34 @@
+name: DEN-3008 three-laptop contract
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  topology-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out independent test harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Check out exact Fiducia infrastructure under test
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fiducia-cloud/fiducia-infra
+          ref: d22740b98a08dea6a30ca364c90ebd59c965b557
+          path: _src/fiducia-infra
+          persist-credentials: false
+          show-progress: false
+
+      - name: Validate three independent synthetic provider clusters
+        run: node scripts/three-laptop-contract.mjs _src/fiducia-infra
+
+      - name: Shell syntax check physical preflight
+        run: bash -n scripts/three-laptop-physical-preflight.sh
