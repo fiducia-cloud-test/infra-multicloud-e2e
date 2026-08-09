@@ -1,0 +1,259 @@
+# Additive cross-organization fixture; it does not modify the generated harness.
+name: namespace ownership canary
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/namespace-ownership-canary.yml'
+      - 'scripts/namespace-ownership-canary.py'
+      - 'scripts/namespace-scanner-boundary-audit.py'
+      - 'patches/den-2926-scanner-boundaries.patch'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: namespace-ownership-canary-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: exact-head contract from fiducia-cloud-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out canary without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Check out exact pre-fix subject
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/k8s-cluster
+          ref: fe434f4cb752c14b3f7db2d03031d57c299e2dad
+          path: subject-before
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Check out exact merged Phase 0 subject
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/k8s-cluster
+          ref: 276eb2f1f2990822de2ffb45516cb6a8d19697cf
+          path: subject
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+
+      - name: Compile and run source suites
+        run: |
+          python3 -m py_compile \
+            subject/tools/namespace_migration.py \
+            subject/tools/test_namespace_migration.py \
+            subject/tools/namespace_test_owner_contract.py \
+            subject/tools/test_namespace_test_owner_contract.py \
+            scripts/namespace-ownership-canary.py \
+            scripts/namespace-scanner-boundary-audit.py
+          python3 subject/tools/test_namespace_migration.py
+          python3 subject/tools/test_namespace_test_owner_contract.py
+
+      - name: Run independent test-owner canary
+        run: |
+          mkdir -p artifacts
+          python3 scripts/namespace-ownership-canary.py \
+            --subject subject \
+            --format json \
+            > artifacts/namespace-ownership-canary.json
+
+      - name: Confirm pre-fix boundary failure
+        id: before_boundary
+        continue-on-error: true
+        run: |
+          python3 scripts/namespace-scanner-boundary-audit.py \
+            --subject subject-before \
+            --format json \
+            > artifacts/namespace-scanner-boundary-before.json
+
+      - name: Require merged token and template boundaries
+        run: |
+          python3 scripts/namespace-scanner-boundary-audit.py \
+            --subject subject \
+            --format json \
+            > artifacts/namespace-scanner-boundary-fixed.json
+
+      - name: Verify independently reviewed patch provenance
+        run: |
+          printf '%s  %s\n' \
+            'cdc9799efb1e5ed9656b5aee5f19aad47a486448fa18df1115ca5918673a2af2' \
+            'patches/den-2926-scanner-boundaries.patch' \
+            | sha256sum --check --strict
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          delta = json.loads(Path('subject/artifacts/den-2926-inventory-delta.json').read_text())
+          expected = {
+              'repository': 'fiducia-cloud-test/infra-multicloud-e2e',
+              'commit': '46c3b9d08330e26aee03a98b682adca5b44d94ea',
+              'gitBlob': 'f3e0ee581df64c78eae46d8f903361ef9f5d03f8',
+              'sha256': 'cdc9799efb1e5ed9656b5aee5f19aad47a486448fa18df1115ca5918673a2af2',
+          }
+          if delta.get('sourcePatch') != expected:
+              raise SystemExit('source patch provenance does not match the reviewed test-org patch')
+          PY
+
+      - name: Generate contract and exact inventories
+        run: |
+          python3 subject/tools/namespace_migration.py check \
+            --root subject \
+            --format json \
+            > artifacts/namespace-contract-fixed.json
+          python3 subject-before/tools/namespace_migration.py inventory \
+            --root subject-before \
+            --format json \
+            > artifacts/namespace-inventory-before.json
+          python3 subject/tools/namespace_migration.py inventory \
+            --root subject \
+            --format json \
+            > artifacts/namespace-inventory-fixed.json
+
+      - name: Verify exact reproducibility and deltas
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          artifacts = Path('artifacts')
+          before = json.loads((artifacts / 'namespace-inventory-before.json').read_text())
+          fixed = json.loads((artifacts / 'namespace-inventory-fixed.json').read_text())
+          committed = json.loads(Path('subject/artifacts/namespace-inventory.json').read_text())
+          committed_delta = json.loads(
+              Path('subject/artifacts/den-2926-inventory-delta.json').read_text()
+          )
+          boundary = json.loads(
+              (artifacts / 'namespace-scanner-boundary-fixed.json').read_text()
+          )
+          contract = json.loads((artifacts / 'namespace-contract-fixed.json').read_text())
+
+          if fixed != committed:
+              raise SystemExit('committed merged inventory is not exact-head reproducible')
+          if fixed.get('generatedFrom', {}).get('root') != '.':
+              raise SystemExit('inventory root provenance is environment-specific')
+          if any(item['path'].startswith('artifacts/') for item in fixed['occurrences']):
+              raise SystemExit('inventory recursively scanned committed evidence')
+          if not boundary.get('valid') or not contract.get('valid'):
+              raise SystemExit('merged boundary or contract evidence is not valid')
+          if contract.get('diagnostics'):
+              raise SystemExit('merged contract still has diagnostics')
+
+          def identity(item):
+              return (
+                  item['path'], item['line'], item['column'],
+                  item['system'], item['reference'],
+              )
+
+          before_items = {identity(item): item for item in before['occurrences']}
+          fixed_items = {identity(item): item for item in fixed['occurrences']}
+          removed = [before_items[key] for key in sorted(before_items.keys() - fixed_items.keys())]
+          added = [fixed_items[key] for key in sorted(fixed_items.keys() - before_items.keys())]
+          summary = fixed['summary']
+
+          expected_summary = {
+              'total': 1134,
+              'distinctReferences': 220,
+              'unclassifiedActive': 483,
+              'bySystem': {
+                  'generated-package': 82,
+                  'host-path': 191,
+                  'metadata-key': 367,
+                  'slash-namespace': 380,
+                  'source-package': 114,
+              },
+              'byOwner': {
+                  'benefactor-cc': 3,
+                  'fiducia-cloud': 67,
+                  'ores': 458,
+                  'shared-auth': 11,
+                  'unclassified': 595,
+              },
+              'byScope': {'active': 883, 'documentation': 176, 'test': 75},
+              'byStatus': {
+                  'classified': 105,
+                  'review-required': 434,
+                  'unclassified': 595,
+              },
+          }
+          if summary != expected_summary:
+              raise SystemExit('merged exact-head summary differs from approved counts')
+          if len(removed) != 405 or added:
+              raise SystemExit('merged exact occurrence delta is not 405 removals / 0 additions')
+          if committed_delta['before'] != before['summary']:
+              raise SystemExit('committed baseline summary is stale')
+          if committed_delta['after'] != summary:
+              raise SystemExit('committed merged summary is stale')
+          if committed_delta['removedOccurrenceCount'] != 405:
+              raise SystemExit('committed removed count is stale')
+          if committed_delta['addedOccurrenceCount'] != 0:
+              raise SystemExit('committed added count is stale')
+
+          systems = sorted(set(before['summary']['bySystem']) | set(summary['bySystem']))
+          report = {
+              'valid': True,
+              'beforeSha': 'fe434f4cb752c14b3f7db2d03031d57c299e2dad',
+              'fixedSha': '276eb2f1f2990822de2ffb45516cb6a8d19697cf',
+              'before': before['summary'],
+              'fixed': summary,
+              'delta': {
+                  'total': summary['total'] - before['summary']['total'],
+                  'distinctReferences': (
+                      summary['distinctReferences']
+                      - before['summary']['distinctReferences']
+                  ),
+                  'unclassifiedActive': (
+                      summary['unclassifiedActive']
+                      - before['summary']['unclassifiedActive']
+                  ),
+                  'bySystem': {
+                      system: summary['bySystem'].get(system, 0)
+                      - before['summary']['bySystem'].get(system, 0)
+                      for system in systems
+                  },
+              },
+              'removedOccurrenceCount': len(removed),
+              'addedOccurrenceCount': len(added),
+              'removedSamples': removed[:50],
+              'addedSamples': added[:50],
+              'boundary': boundary,
+              'contractDiagnostics': contract.get('diagnostics', []),
+              'sourcePatch': committed_delta['sourcePatch'],
+          }
+          (artifacts / 'namespace-inventory-delta.json').write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n'
+          )
+          PY
+
+      - name: Upload exact-head evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: namespace-ownership-canary
+          path: |
+            artifacts/namespace-ownership-canary.json
+            artifacts/namespace-scanner-boundary-before.json
+            artifacts/namespace-scanner-boundary-fixed.json
+            artifacts/namespace-contract-fixed.json
+            artifacts/namespace-inventory-before.json
+            artifacts/namespace-inventory-fixed.json
+            artifacts/namespace-inventory-delta.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enforce the pre-fix negative control
+        if: ${{ steps.before_boundary.outcome != 'failure' }}
+        run: |
+          echo 'The known pre-fix exact head unexpectedly passed.' >&2
+          exit 1

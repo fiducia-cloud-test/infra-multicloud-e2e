@@ -1,0 +1,31 @@
+name: DEN-3008 physical three-laptop preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  physical-preflight:
+    # This label is intentionally absent from hosted runners. A missing runner is
+    # not a pass and cannot be used as certification evidence.
+    runs-on: [self-hosted, fiducia-laptop-orchestrator]
+    timeout-minutes: 15
+    steps:
+      - name: Check out independent test harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          show-progress: false
+
+      - name: Verify three distinct physical Kubernetes clusters
+        run: bash scripts/three-laptop-physical-preflight.sh | tee den-3008-physical-preflight.json
+
+      - name: Upload machine-readable preflight evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: den-3008-physical-preflight-${{ github.run_id }}
+          path: den-3008-physical-preflight.json
+          if-no-files-found: error
+          retention-days: 14

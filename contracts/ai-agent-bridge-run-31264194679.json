@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "subject": {
+    "repository": "ORESoftware/k8s-cluster",
+    "revision": "664ea2fa106168e7e62ab70adb5719d54f59e9c4",
+    "base_branch": "dev",
+    "pull_request": 1210,
+    "files": {
+      "bridge_deployment": {
+        "path": "remote/argocd/dd-next-runtime/dd-ai-agent-bridge.deployment.yaml",
+        "git_blob_sha": "f07b2c423b839a773d48f79b0c23161825589299"
+      },
+      "slack_bundle": {
+        "path": "remote/argocd/dd-next-runtime/dd-ai-agent-bridge.service.yaml",
+        "git_blob_sha": "eda7bcf3f3baf84d819568ece8a7d97514c3d362"
+      },
+      "runner_deployment": {
+        "path": "remote/argocd/dd-next-runtime/dd-ai-agent-runner.deployment.yaml",
+        "git_blob_sha": "7689a6009a8b1823527101c44e14457899659fac"
+      },
+      "bridge_external_secret": {
+        "path": "remote/argocd/dd-next-runtime/dd-ai-agent-bridge.externalsecret.yaml",
+        "git_blob_sha": "ca96d161d2d6e4f8eceaf074e880e121543edd62"
+      },
+      "bridge_network_policy": {
+        "path": "remote/argocd/dd-next-runtime/dd-ai-agent-bridge.networkpolicy.yaml",
+        "git_blob_sha": "264e52b07cbd39e6eca46c37cfdbf1e3117f86ff"
+      },
+      "runner_network_policy": {
+        "path": "remote/argocd/dd-next-runtime/dd-ai-agent-runner.networkpolicy.yaml",
+        "git_blob_sha": "d27f2f50285fa0c8a2f6e1be2133608082e4ca51"
+      },
+      "kustomization": {
+        "path": "remote/argocd/dd-next-runtime/kustomization.yaml",
+        "git_blob_sha": "1793acaded81d9d66aebf1255821856098364963"
+      }
+    }
+  },
+  "release": {
+    "repository": "ORESoftware/ai-agent-bridge.rs",
+    "source_sha": "ec667946b1f8725b6baea8e67ae6a701d602dc04",
+    "workflow": ".github/workflows/container-images.yml",
+    "workflow_run_id": 31264194679,
+    "workflow_run_attempt": 1,
+    "artifacts": [
+      {
+        "artifact_id": 9023699071,
+        "artifact_name": "image-digest-bridge-31264194679-1",
+        "archive_digest": "sha256:a9b7c1338579e2c35aeb918908e172f43d79f5ebd68e8065d217741b18226048",
+        "payload_sha256": "bf3657263f0f69c918b120c0e72a82c39b8554de83ac299e1633dc5f7dc1ebfa",
+        "payload": {
+          "schema_version": 2,
+          "repository": "ORESoftware/ai-agent-bridge.rs",
+          "source_sha": "ec667946b1f8725b6baea8e67ae6a701d602dc04",
+          "workflow_run_id": 31264194679,
+          "workflow_run_attempt": 1,
+          "target": "bridge",
+          "image": "ghcr.io/oresoftware/fiducia-ai-agent-bridge",
+          "digest": "sha256:465803624fe98294620a644d6620ff8e179e7082a3142a4dd7bed68d1c9279d6",
+          "image_ref": "ghcr.io/oresoftware/fiducia-ai-agent-bridge@sha256:465803624fe98294620a644d6620ff8e179e7082a3142a4dd7bed68d1c9279d6",
+          "exact_digest_pulled": true,
+          "exact_runtime_contract_verified": true,
+          "exact_digest_vulnerability_scan": "passed"
+        }
+      },
+      {
+        "artifact_id": 9023700458,
+        "artifact_name": "image-digest-slack-command-31264194679-1",
+        "archive_digest": "sha256:d6b20f4b7e036f1b23f413171370a5ef9af860121afc822671382f276a02aa48",
+        "payload_sha256": "1182339c4af1509c84f004bb33cb5b972b024f3f1bcf979a2cc4093a00feea97",
+        "payload": {
+          "schema_version": 2,
+          "repository": "ORESoftware/ai-agent-bridge.rs",
+          "source_sha": "ec667946b1f8725b6baea8e67ae6a701d602dc04",
+          "workflow_run_id": 31264194679,
+          "workflow_run_attempt": 1,
+          "target": "slack-command",
+          "image": "ghcr.io/oresoftware/fiducia-slack-command",
+          "digest": "sha256:2edbd96bc02780d951425b6688e5b555ced445ba568576b1b9db56fc417b60ae",
+          "image_ref": "ghcr.io/oresoftware/fiducia-slack-command@sha256:2edbd96bc02780d951425b6688e5b555ced445ba568576b1b9db56fc417b60ae",
+          "exact_digest_pulled": true,
+          "exact_runtime_contract_verified": true,
+          "exact_digest_vulnerability_scan": "passed"
+        }
+      },
+      {
+        "artifact_id": 9023708197,
+        "artifact_name": "image-digest-runner-31264194679-1",
+        "archive_digest": "sha256:cc2b9e82d84b4ee30a2181f78971d21f63612e1226a65ad1cba1792c21053ea7",
+        "payload_sha256": "b86682b97472003f2e974c5c29d4e669a60d3ec4bf3f1c1069ee209d5802f6cd",
+        "payload": {
+          "schema_version": 2,
+          "repository": "ORESoftware/ai-agent-bridge.rs",
+          "source_sha": "ec667946b1f8725b6baea8e67ae6a701d602dc04",
+          "workflow_run_id": 31264194679,
+          "workflow_run_attempt": 1,
+          "target": "runner",
+          "image": "ghcr.io/oresoftware/fiducia-ai-agent-runner",
+          "digest": "sha256:e18c1ea7113f40e303379bd75bfd32b41ba00137a91e965ea67dca591e8105f4",
+          "image_ref": "ghcr.io/oresoftware/fiducia-ai-agent-runner@sha256:e18c1ea7113f40e303379bd75bfd32b41ba00137a91e965ea67dca591e8105f4",
+          "exact_digest_pulled": true,
+          "exact_runtime_contract_verified": true,
+          "exact_digest_vulnerability_scan": "passed"
+        }
+      }
+    ],
+    "workflow_git_blob_sha": "e5a07260cb4c52b304d8185328cddfac71ee61f7"
+  },
+  "activation": {
+    "bridge_replicas": 1,
+    "slack_command_replicas": 1,
+    "runner_replicas": 0,
+    "slack_command_dry_run": true,
+    "public_host": "api.fiducia.cloud",
+    "exact_public_paths": [
+      "/slack/commands/ores-claude",
+      "/slack/commands/ores-chatgpt",
+      "/slack/interactions"
+    ]
+  }
+}
