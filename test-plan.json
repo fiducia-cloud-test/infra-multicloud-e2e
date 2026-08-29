@@ -27,7 +27,7 @@
       "fullName": "fiducia-cloud/fiducia-infra",
       "exists": true,
       "branch": "main",
-      "sha": "0323e41b4d36514c4021ac6016abcc976948bbe2",
+      "sha": "77ca7a4bc81b705fcee6954960cb03817f294afa",
       "visibility": "public"
     }
   ],
@@ -37,6 +37,9 @@
     "immutableSourcePins": true,
     "pullRequestCredentials": false,
     "leastPrivilege": true,
-    "redactSecretsAndRawMedia": true
+    "redactSecretsAndRawMedia": true,
+    "protectedSourceIntegration": true,
+    "protectedSourceIntegrationStatus": "not-executed-unless-protected-lane-runs",
+    "productOverlayPreserved": true
   }
 }
