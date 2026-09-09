@@ -19,6 +19,10 @@ jobs:
     name: exact-head plaintext manifest from fiducia-cloud-test
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      SUBJECT_SHA: bb11a68ba6f2667bdea655c88b155a6ca3c910e0
+      EXPECTED_INVENTORY_SHA256: c9223c5eee842e50d67a393fc275ad50968dcd5e828d6daefb6560ae389e02e0
+      EXPECTED_MANIFEST_SHA256: 6ef5ad2e8c9c63870adac9dd283f2de9a3e74006875a5e81bcfa425083c4d35f
     steps:
       - name: Check out canary without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,7 +34,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ORESoftware/k8s-cluster
-          ref: d742269474f844236492f9185a5640f193ea9817
+          ref: ${{ env.SUBJECT_SHA }}
           path: subject
           persist-credentials: false
           show-progress: false
@@ -40,8 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git -C subject rev-parse HEAD)" = \
-            'd742269474f844236492f9185a5640f193ea9817'
+          test "$(git -C subject rev-parse HEAD)" = "$SUBJECT_SHA"
           test ! -e subject/.github/transport/den-2786-manifest-source.tar.xz
           test ! -e subject/.github/workflows/den-2786-materialize-manifest.yml
           test -z "$(find subject/catalog/namespaces -maxdepth 1 -type f -name '.den-2786-bundle-*.hex' -print -quit)"
@@ -81,18 +84,22 @@ jobs:
             artifacts/namespace-inventory.json \
             > artifacts/namespace-manifest-canary.sha256
 
-      - name: Verify exact identities and fail-closed controls
+      - name: Verify exact identities, digests, and fail-closed controls
         run: |
           python3 - <<'PY'
           import hashlib
           import json
+          import os
           from pathlib import Path
 
           subject = Path('subject')
           artifacts = Path('artifacts')
-          inventory = json.loads(
-              (artifacts / 'namespace-inventory.json').read_text(encoding='utf-8')
-          )
+          subject_sha = os.environ['SUBJECT_SHA']
+          expected_inventory_sha = os.environ['EXPECTED_INVENTORY_SHA256']
+          expected_manifest_sha = os.environ['EXPECTED_MANIFEST_SHA256']
+
+          inventory_path = artifacts / 'namespace-inventory.json'
+          inventory = json.loads(inventory_path.read_text(encoding='utf-8'))
           committed_inventory = json.loads(
               (subject / 'artifacts/namespace-inventory.json').read_text(
                   encoding='utf-8'
@@ -113,12 +120,18 @@ jobs:
           )
 
           entries = manifest['spec']['entries']
+          occurrences = inventory['occurrences']
+          entry_count = len(entries)
+          inventory_count = len(occurrences)
+          inventory_sha = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
+          manifest_sha = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
           inventory_identity = {
               (
                   item['path'], item['line'], item['column'],
                   item['system'], item['reference'],
               )
-              for item in inventory['occurrences']
+              for item in occurrences
           }
           manifest_identity = {
               (
@@ -129,12 +142,17 @@ jobs:
           }
           checks = {
               'exact inventory reproduction': inventory == committed_inventory,
-              'inventory total': inventory['summary']['total'] == 1134,
+              'inventory summary total matches occurrences': inventory['summary']['total'] == inventory_count,
               'manifest report valid': report.get('valid') is True,
-              'manifest report entries': report.get('entryCount') == 1134,
-              'inventory report entries': report.get('inventoryEntryCount') == 1134,
+              'manifest report entries match manifest': report.get('entryCount') == entry_count,
+              'inventory report entries match inventory': report.get('inventoryEntryCount') == inventory_count,
+              'inventory and manifest counts match': entry_count == inventory_count,
               'one row per identity': inventory_identity == manifest_identity,
-              'no duplicate manifest identities': len(manifest_identity) == 1134,
+              'no duplicate manifest identities': len(manifest_identity) == entry_count,
+              'inventory digest matches certified main evidence': inventory_sha == expected_inventory_sha,
+              'report inventory digest matches certified main evidence': report.get('inventorySha256') == expected_inventory_sha,
+              'manifest digest matches certified main evidence': manifest_sha == expected_manifest_sha,
+              'report manifest digest matches certified main evidence': report.get('manifestSha256') == expected_manifest_sha,
               'execution disabled': manifest['spec']['executionAuthorized'] is False,
               'cleanup disabled': all(
                   item.get('destructiveCleanupAllowed') is False
@@ -150,12 +168,11 @@ jobs:
 
           evidence = {
               'valid': True,
-              'subjectSha': 'd742269474f844236492f9185a5640f193ea9817',
-              'entryCount': len(entries),
+              'subjectSha': subject_sha,
+              'entryCount': entry_count,
               'inventorySummary': inventory['summary'],
-              'manifestSha256': hashlib.sha256(
-                  manifest_path.read_bytes()
-              ).hexdigest(),
+              'inventorySha256': inventory_sha,
+              'manifestSha256': manifest_sha,
               'checks': checks,
               'credentialsLoaded': [],
               'providerWrites': [],
