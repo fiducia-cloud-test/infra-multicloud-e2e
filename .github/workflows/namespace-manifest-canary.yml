@@ -20,9 +20,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      SUBJECT_SHA: bb11a68ba6f2667bdea655c88b155a6ca3c910e0
-      EXPECTED_INVENTORY_SHA256: c9223c5eee842e50d67a393fc275ad50968dcd5e828d6daefb6560ae389e02e0
-      EXPECTED_MANIFEST_SHA256: 6ef5ad2e8c9c63870adac9dd283f2de9a3e74006875a5e81bcfa425083c4d35f
+      SUBJECT_SHA: da3cb54a24345e4263929a5a1670cc190e713b76
+      EXPECTED_INVENTORY_SHA256: b24e31e4311b118a97e57a278aae8bf43a2f501f345ad8c8818690fe4fd04bfa
+      EXPECTED_MANIFEST_SHA256: d9e9314326c8e2d9677242f979713304bdd004c5dcdcbfed1cda1768c03b8f28
     steps:
       - name: Check out canary without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -149,10 +149,10 @@ jobs:
               'inventory and manifest counts match': entry_count == inventory_count,
               'one row per identity': inventory_identity == manifest_identity,
               'no duplicate manifest identities': len(manifest_identity) == entry_count,
-              'inventory digest matches certified main evidence': inventory_sha == expected_inventory_sha,
-              'report inventory digest matches certified main evidence': report.get('inventorySha256') == expected_inventory_sha,
-              'manifest digest matches certified main evidence': manifest_sha == expected_manifest_sha,
-              'report manifest digest matches certified main evidence': report.get('manifestSha256') == expected_manifest_sha,
+              'inventory digest matches reviewed source evidence': inventory_sha == expected_inventory_sha,
+              'report inventory digest matches reviewed source evidence': report.get('inventorySha256') == expected_inventory_sha,
+              'manifest digest matches reviewed source evidence': manifest_sha == expected_manifest_sha,
+              'report manifest digest matches reviewed source evidence': report.get('manifestSha256') == expected_manifest_sha,
               'execution disabled': manifest['spec']['executionAuthorized'] is False,
               'cleanup disabled': all(
                   item.get('destructiveCleanupAllowed') is False
