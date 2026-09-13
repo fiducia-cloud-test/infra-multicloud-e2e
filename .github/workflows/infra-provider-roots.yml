@@ -51,6 +51,11 @@ jobs:
       - name: Validate six repository-owned roots with ores-cli
         run: ./scripts/validate-infra-provider-roots.sh
 
+      - name: Set up tested Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.16.0
+
       - name: Generate comparison-only Schema B and compare peer authorities
         uses: ORESoftware/typespec-json-schema-validator@eac61635922c244c7a37829c63d0966de44ff800
         with:
