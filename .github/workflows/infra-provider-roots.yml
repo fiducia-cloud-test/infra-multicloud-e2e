@@ -1,0 +1,66 @@
+name: Infra provider root contract
+
+on:
+  pull_request:
+    paths:
+      - "neon/**"
+      - "supabase/**"
+      - "cloudflare/**"
+      - "aws/**"
+      - "gcp/**"
+      - "tf/**"
+      - "contracts/infra-gitops/**"
+      - "scripts/validate-infra-provider-roots.sh"
+      - ".github/workflows/infra-provider-roots.yml"
+  push:
+    branches: [main]
+    paths:
+      - "neon/**"
+      - "supabase/**"
+      - "cloudflare/**"
+      - "aws/**"
+      - "gcp/**"
+      - "tf/**"
+      - "contracts/infra-gitops/**"
+      - "scripts/validate-infra-provider-roots.sh"
+      - ".github/workflows/infra-provider-roots.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Verify exact revision
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Install pinned ores-cli
+        run: cargo install --git https://github.com/ORESoftware/ores-cli --rev dacbe8e5dc1eb4b5492031ce5a45b9b1a8c5251b --locked --bin oresc
+
+      - name: Validate six repository-owned roots with ores-cli
+        run: ./scripts/validate-infra-provider-roots.sh
+
+      - name: Generate comparison-only Schema B and compare peer authorities
+        uses: ORESoftware/typespec-json-schema-validator@eac61635922c244c7a37829c63d0966de44ff800
+        with:
+          typespec: contracts/infra-gitops/main.tsp
+          schema: contracts/infra-gitops/authored.schema.json
+          report: .typespec-json-schema-validator/report.json
+          contract_ir: .typespec-json-schema-validator/contract-ir.json
+          output_dir: .typespec-json-schema-validator/generated
+          max_probes: "64"
+
+      - name: Verify authored authorities stayed authored
+        if: ${{ always() }}
+        run: git diff --exit-code -- contracts/infra-gitops/

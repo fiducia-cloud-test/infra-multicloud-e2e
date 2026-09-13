@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "provider": "cloudflare",
+  "role": "edge-provider-boundary",
+  "secrets": "external-only",
+  "terraformSharedRoot": "tf",
+  "contract": "contracts/infra-gitops"
+}

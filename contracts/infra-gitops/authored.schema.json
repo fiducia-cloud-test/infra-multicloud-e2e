@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ores.infra-gitops.schema.json",
+  "$defs": {
+    "InfraGitOpsContract": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "InfraGitOpsContract",
+      "type": "object",
+      "properties": {
+        "supabaseRoot": { "type": "string" },
+        "neonRoot": { "type": "string" },
+        "cloudflareRoot": { "type": "string" },
+        "awsRoot": { "type": "string" },
+        "gcpRoot": { "type": "string" },
+        "tfRoot": { "type": "string" },
+        "secretPolicy": { "type": "string" },
+        "promotionPolicy": { "type": "string" }
+      },
+      "required": ["supabaseRoot", "neonRoot", "cloudflareRoot", "awsRoot", "gcpRoot", "tfRoot", "secretPolicy", "promotionPolicy"],
+      "unevaluatedProperties": false
+    }
+  }
+}
