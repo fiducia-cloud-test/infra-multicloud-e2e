@@ -1,0 +1,78 @@
+name: Fiducia PR92 durable coordinator acceptance
+
+on:
+  push:
+    branches: [test/durable-coordinator-pr92]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: durable-coordinator-pr92-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out test harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out Fiducia PR92 source head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fiducia-cloud/fiducia-infra
+          ref: d1327f6aed1444c5073087ec9d11062230b3cc62
+          path: source/fiducia-infra
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "22.22.1"
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Run cross-org contract tests
+        env:
+          SOURCE_ROOT: ${{ github.workspace }}/source/fiducia-infra
+        run: node --test test/durable-coordinator-pr92.test.mjs
+
+      - name: Exercise Worker build, generated bindings, and dry-run
+        working-directory: source/fiducia-infra/modules/cloudflare/durable-coordinator
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts --no-audit --no-fund
+          npm run check
+
+      - name: Start local workerd and instantiate Durable Object
+        working-directory: source/fiducia-infra/modules/cloudflare/durable-coordinator
+        run: |
+          set -euo pipefail
+          npx wrangler dev --local --env preview --port 8787 --log-level error > "$RUNNER_TEMP/wrangler.log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; cat "$RUNNER_TEMP/wrangler.log"' EXIT
+          for i in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8787/health > "$RUNNER_TEMP/health.json"; then break; fi
+            sleep 1
+          done
+          node -e 'const x=require(process.argv[1]); if(!x.ok) process.exit(1)' "$RUNNER_TEMP/health.json"
+          curl --fail --silent 'http://127.0.0.1:8787/do-health?object=test-org-acceptance' > "$RUNNER_TEMP/do-health.json"
+          node -e 'const x=require(process.argv[1]); if(!x.ok || x.durable_object!=="FiduciaLeaseCoordinator" || x.storage!=="sqlite" || x.rpc!==true) process.exit(1)' "$RUNNER_TEMP/do-health.json"
+
+      - name: Validate modules-first Terraform from outside source repo
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive source/fiducia-infra/modules source/fiducia-infra/environments
+          for env in preview staging production; do
+            terraform -chdir="source/fiducia-infra/environments/$env" init -backend=false -input=false >/dev/null
+            terraform -chdir="source/fiducia-infra/environments/$env" validate
+          done
