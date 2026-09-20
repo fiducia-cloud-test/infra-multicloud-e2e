@@ -1,0 +1,70 @@
+name: ores-compose same NanoID canary
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ORES_COMPOSE_SHA: b39251acef0130f3c5961f8abec13d53dc7e3737
+
+jobs:
+  same-nanoid:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/ores-compose
+          ref: ${{ env.ORES_COMPOSE_SHA }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with: { toolchain: 1.95.0 }
+      - name: Build exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$ORES_COMPOSE_SHA"
+          cargo build --manifest-path source/Cargo.toml --locked --bin ores-compose
+      - name: Same NanoID is refused and alternate manifest can shut it down
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$GITHUB_WORKSPACE/source/target/debug/ores-compose"
+          root="$RUNNER_TEMP/same-id"
+          export ORES_COMPOSE_RUNTIME_DIR="$RUNNER_TEMP/ores-runtime"
+          mkdir -p "$root/one" "$root/two"
+          cat > "$root/one/.ores-compose.yaml" <<'YAML'
+          schema_version: ores.compose.v1
+          # ores-compose-nano-id: SAMECLUSTERID12345678
+          project: first-checkout
+          services:
+            worker: { runtime: host, command: ["sleep", "30"] }
+          YAML
+          cat > "$root/two/.ores-compose.yaml" <<'YAML'
+          schema_version: ores.compose.v1
+          # ores-compose-nano-id: SAMECLUSTERID12345678
+          project: second-checkout
+          services:
+            worker: { runtime: host, command: ["sleep", "30"] }
+          YAML
+          "$bin" up --skip-zed-pkg --skip-rpc-gen "$root/one/.ores-compose.yaml" >"$RUNNER_TEMP/one.log" 2>&1 &
+          first=$!
+          trap '"$bin" down "$root/two/.ores-compose.yaml" >/dev/null 2>&1 || true; kill "$first" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 100); do
+            test -d "$ORES_COMPOSE_RUNTIME_DIR/clusters" && compgen -G "$ORES_COMPOSE_RUNTIME_DIR/clusters/*.cluster" >/dev/null && break
+            sleep 0.1
+          done
+          "$bin" up --skip-zed-pkg --skip-rpc-gen "$root/two/.ores-compose.yaml" >"$RUNNER_TEMP/two.log" 2>&1
+          grep -q 'same nano_id' "$RUNNER_TEMP/two.log"
+          test "$(find "$ORES_COMPOSE_RUNTIME_DIR/clusters" -name '*.cluster' -type f | wc -l)" -eq 1
+          "$bin" down "$root/two/.ores-compose.yaml"
+          wait "$first" || true
+          test -z "$(find "$ORES_COMPOSE_RUNTIME_DIR/clusters" -name '*.cluster' -type f -print -quit)"
+          trap - EXIT
