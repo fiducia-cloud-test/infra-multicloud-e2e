@@ -42,14 +42,14 @@ jobs:
           mkdir -p "$root/one" "$root/two"
           cat > "$root/one/.ores-compose.yaml" <<'YAML'
           schema_version: ores.compose.v1
-          # ores-compose-nano-id: SAMECLUSTERID123456789
+          # ores-compose-nano-id: SAMECLUSTERID12345678
           project: first-checkout
           services:
             worker: { runtime: host, command: ["sleep", "30"] }
           YAML
           cat > "$root/two/.ores-compose.yaml" <<'YAML'
           schema_version: ores.compose.v1
-          # ores-compose-nano-id: SAMECLUSTERID123456789
+          # ores-compose-nano-id: SAMECLUSTERID12345678
           project: second-checkout
           services:
             worker: { runtime: host, command: ["sleep", "30"] }
