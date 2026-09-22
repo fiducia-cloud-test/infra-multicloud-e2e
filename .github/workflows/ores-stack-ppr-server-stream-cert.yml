@@ -1,0 +1,66 @@
+name: ores-stack PPR server-stream certification
+
+on:
+  push:
+    branches: [test/ores-stack-ppr-stream-20260921]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact ores-stack branch
+        uses: actions/checkout@v4
+        with:
+          repository: ORESoftware/ores-stack
+          ref: feat/ppr-server-stream-current-main-20260921
+          path: ores-stack
+          fetch-depth: 1
+
+      - name: Install Rust 1.95
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.95.0'
+          components: rustfmt,clippy
+
+      - name: Format check
+        working-directory: ores-stack
+        run: cargo fmt --all -- --check
+
+      - name: Resolve branch lockfile and show exact diff
+        working-directory: ores-stack
+        run: |
+          cargo update -p ores-middleware
+          git diff -- Cargo.lock | tee /tmp/ores-stack-lock.diff
+
+      - name: Compile CLI and core
+        working-directory: ores-stack
+        run: |
+          cargo check -p ores-stack-core
+          cargo check -p ores-stack-cli
+
+      - name: Run focused generator and PPR tests
+        working-directory: ores-stack
+        run: |
+          cargo test -p ores-stack-core api_lambda -- --nocapture
+          cargo test -p ores-stack-cli ppr -- --nocapture
+
+      - name: Build ores-stack
+        working-directory: ores-stack
+        run: cargo build -p ores-stack-cli --bin ores-stack
+
+      - name: Run real delayed multi-chunk server-stream E2E
+        working-directory: ores-stack
+        env:
+          ORES_STACK_BIN: ${{ github.workspace }}/ores-stack/target/debug/ores-stack
+        run: ./scripts/ppr-server-stream-e2e.sh
+
+      - name: Preserve lock diff in log
+        if: always()
+        run: |
+          echo '--- Cargo.lock diff produced by exact branch ---'
+          cat /tmp/ores-stack-lock.diff 2>/dev/null || true
