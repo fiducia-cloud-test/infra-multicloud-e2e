@@ -20,6 +20,8 @@ jobs:
           ref: feat/ppr-server-stream-current-main-20260921
           path: ores-stack
           fetch-depth: 1
+          token: ${{ secrets.ORE_SOURCE_PAT }}
+          persist-credentials: false
 
       - name: Install Rust 1.95
         uses: dtolnay/rust-toolchain@stable
