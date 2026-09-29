@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provider": "terraform",
+  "role": "shared-terraform-composition-boundary",
+  "secrets": "external-only",
+  "contract": "contracts/infra-gitops"
+}

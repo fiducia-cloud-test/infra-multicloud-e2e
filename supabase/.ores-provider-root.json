@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provider": "supabase",
+  "role": "database-provider-boundary",
+  "secrets": "external-only",
+  "contract": "contracts/infra-gitops"
+}
