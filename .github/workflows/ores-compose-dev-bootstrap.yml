@@ -1,0 +1,246 @@
+name: ores-compose dev bootstrap canary
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ores-compose-dev-bootstrap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ores-compose-dev-bootstrap-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  dev-bootstrap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      ORES_COMPOSE_SHA: 19222778d6a9a95ef5a7184dc6766f4103920fcc
+      SOURCE_FIXTURE_SHA: 1456ecaa48f836b00b8aff0b056002efa5a2b896
+    steps:
+      - name: Check out test harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require protected cross-organization read credential
+        env:
+          TEST_FLEET_READ_TOKEN: ${{ secrets.TEST_FLEET_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$TEST_FLEET_READ_TOKEN"
+
+      - name: Check out exact ores-compose candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ORESoftware/ores-compose
+          ref: ${{ env.ORES_COMPOSE_SHA }}
+          token: ${{ secrets.TEST_FLEET_READ_TOKEN }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: tmp/ores-compose
+
+      - name: Build and unit-test exact candidate
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.98.1
+          cd tmp/ores-compose
+          test "$(git rev-parse HEAD)" = "$ORES_COMPOSE_SHA"
+          cargo fmt --all --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --all-targets
+          cargo build --bin ores-compose
+
+      - name: Verify CLI skip controls and fail-before-side-effects config admission
+        run: |
+          set -euo pipefail
+          BIN="$PWD/tmp/ores-compose/target/debug/ores-compose"
+          "$BIN" --help > tmp/ores-compose-help.txt
+          for flag in skip-install skip-zed-pkg skip-symlinks skip-simlinks skip-zed-build skip-zed-hooks skip-rpc-gen ignore-rpc-gen-warning shutdown-timeout-ms; do
+            grep -F -- "--$flag" tmp/ores-compose-help.txt >/dev/null
+          done
+
+          mkdir -p tmp/invalid-config tmp/empty-home
+          cat > tmp/invalid-config/.ores-compose.yaml <<'YAML'
+          schema_version: ores.compose.v1
+          project: invalid-bootstrap
+          definitely_unknown_field: true
+          services: {}
+          YAML
+          if HOME="$PWD/tmp/empty-home" "$BIN" up tmp/invalid-config/.ores-compose.yaml >tmp/invalid.out 2>&1; then
+            echo 'invalid config unexpectedly started' >&2
+            exit 1
+          fi
+          ! grep -F 'installing the official zed-pkg CLI' tmp/invalid.out
+
+      - name: Exercise infra-owned pinned source and graceful up/down
+        run: |
+          set -euo pipefail
+          BIN="$PWD/tmp/ores-compose/target/debug/ores-compose"
+          ROOT="$PWD/tmp/fiducia-compose-infra"
+          mkdir -p "$ROOT"
+          cat > "$ROOT/.ores-compose.yaml" <<YAML
+          schema_version: ores.compose.v1
+          project: fiducia-compose-source-test
+          allow_lazy_start: false
+          source:
+            repository: https://github.com/fiducia-cloud-test/infra-multicloud-e2e.git
+            commit: $SOURCE_FIXTURE_SHA
+            checkout_dir: tmp/dev/fiducia-cloud-monorepo
+          services:
+            hold:
+              runtime: host
+              command: ["node", "-e", "setInterval(() => {}, 1000)"]
+          YAML
+
+          "$BIN" up --skip-zed-pkg --skip-rpc-gen "$ROOT/.ores-compose.yaml" >tmp/source-up.log 2>&1 &
+          UP_PID=$!
+          for _ in $(seq 1 80); do
+            test -f "$ROOT/.ores/run/fiducia-compose-source-test.pid" && break
+            kill -0 "$UP_PID" 2>/dev/null || { cat tmp/source-up.log >&2; exit 1; }
+            sleep 0.1
+          done
+          test -d "$ROOT/tmp/dev/fiducia-cloud-monorepo/.git"
+          "$BIN" down --shutdown-timeout-ms 1500 "$ROOT/.ores-compose.yaml"
+          wait "$UP_PID"
+          test ! -e "$ROOT/.ores/run/fiducia-compose-source-test.pid"
+
+      - name: Exercise default Zed install, symlink refresh, build, and hook pass
+        run: |
+          set -euo pipefail
+          BIN="$PWD/tmp/ores-compose/target/debug/ores-compose"
+          ROOT="$PWD/tmp/zed-bootstrap-fixture"
+          HOME_DIR="$PWD/tmp/zed-home"
+          mkdir -p "$ROOT" "$HOME_DIR"
+          cat > "$ROOT/.zpkg.toml" <<'TOML'
+          [package]
+          org = "fiducia-cloud-test"
+          name = "ores-compose-zed-bootstrap-fixture"
+          version = "0.1.0"
+          description = "ores-compose Zed lifecycle test fixture"
+          language = "rust"
+
+          [package.repository]
+          vcs = "git"
+          url = "https://github.com/fiducia-cloud-test/infra-multicloud-e2e"
+
+          [dependencies]
+
+          [install]
+          dir = ".vendor/.zed"
+          TOML
+          cat > "$ROOT/.ores-compose.yaml" <<'YAML'
+          schema_version: ores.compose.v1
+          project: zed-bootstrap-test
+          allow_lazy_start: false
+          services:
+            hold:
+              runtime: host
+              command: ["node", "-e", "setInterval(() => {}, 1000)"]
+          YAML
+
+          HOME="$HOME_DIR" "$BIN" up --skip-rpc-gen "$ROOT/.ores-compose.yaml" >tmp/zed-up.log 2>&1 &
+          UP_PID=$!
+          for _ in $(seq 1 160); do
+            test -f "$ROOT/.ores/run/zed-bootstrap-test.pid" && break
+            kill -0 "$UP_PID" 2>/dev/null || { cat tmp/zed-up.log >&2; exit 1; }
+            sleep 0.25
+          done
+          test -x "$HOME_DIR/.zed/bin/zed"
+          test -f "$ROOT/.zpkg.lock"
+          grep -F '"event":"zed_stage"' tmp/zed-up.log >/dev/null
+          grep -F 'install dependencies' tmp/zed-up.log >/dev/null
+          grep -F 'refresh local dependency symlinks' tmp/zed-up.log >/dev/null
+          grep -F 'recompile dependency build hooks' tmp/zed-up.log >/dev/null
+          grep -F 'run pre/post-install hooks' tmp/zed-up.log >/dev/null
+          HOME="$HOME_DIR" "$BIN" down --shutdown-timeout-ms 1500 "$ROOT/.ores-compose.yaml"
+          wait "$UP_PID"
+
+      - name: Exercise RPC temp regeneration, drift failure, ignore, and skip
+        run: |
+          set -euo pipefail
+          BIN="$PWD/tmp/ores-compose/target/debug/ores-compose"
+          ROOT="$PWD/tmp/rpc-bootstrap-fixture"
+          TOOLBIN="$PWD/tmp/fake-tools"
+          mkdir -p "$ROOT/demo-web-server.rs/contracts" "$ROOT/demo-lib-core/generated/rpc" "$ROOT/demo-pub-lib-core/generated/rpc" "$TOOLBIN"
+          cat > "$ROOT/demo-web-server.rs/.ores-stack.toml" <<'TOML'
+          version = 1
+          api_docs_route_map = "contracts/service.route-map.json"
+          TOML
+          printf '{"service":"demo","map":{}}\n' > "$ROOT/demo-web-server.rs/contracts/service.route-map.json"
+          cat > "$TOOLBIN/ores-stack" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          test "$1" = rpc
+          test "$2" = sync
+          shift 2
+          lib=''
+          pub=''
+          while (($#)); do
+            case "$1" in
+              --lib-core) lib="$2"; shift 2 ;;
+              --pub-lib-core) pub="$2"; shift 2 ;;
+              --web-repo|--route-map|--rust-dto-module) shift 2 ;;
+              *) echo "unexpected ores-stack arg: $1" >&2; exit 2 ;;
+            esac
+          done
+          test -n "$lib"
+          test -n "$pub"
+          mkdir -p "$lib/generated/rpc" "$pub/generated/rpc"
+          printf 'deterministic-internal-rpc\n' > "$lib/generated/rpc/client.txt"
+          printf 'deterministic-public-rpc\n' > "$pub/generated/rpc/client.txt"
+          SH
+          chmod +x "$TOOLBIN/ores-stack"
+          printf 'deterministic-internal-rpc\n' > "$ROOT/demo-lib-core/generated/rpc/client.txt"
+          printf 'deterministic-public-rpc\n' > "$ROOT/demo-pub-lib-core/generated/rpc/client.txt"
+          cat > "$ROOT/.ores-compose.yaml" <<'YAML'
+          schema_version: ores.compose.v1
+          project: rpc-bootstrap-test
+          allow_lazy_start: false
+          services:
+            hold:
+              runtime: host
+              command: ["node", "-e", "setInterval(() => {}, 1000)"]
+          YAML
+
+          PATH="$TOOLBIN:$PATH" "$BIN" up --skip-zed-pkg "$ROOT/.ores-compose.yaml" >tmp/rpc-clean.log 2>&1 &
+          UP_PID=$!
+          for _ in $(seq 1 80); do
+            test -f "$ROOT/.ores/run/rpc-bootstrap-test.pid" && break
+            kill -0 "$UP_PID" 2>/dev/null || { cat tmp/rpc-clean.log >&2; exit 1; }
+            sleep 0.1
+          done
+          PATH="$TOOLBIN:$PATH" "$BIN" down --shutdown-timeout-ms 1500 "$ROOT/.ores-compose.yaml"
+          wait "$UP_PID"
+
+          printf 'drift\n' >> "$ROOT/demo-lib-core/generated/rpc/client.txt"
+          if PATH="$TOOLBIN:$PATH" "$BIN" up --skip-zed-pkg "$ROOT/.ores-compose.yaml" >tmp/rpc-drift.log 2>&1; then
+            echo 'RPC drift unexpectedly admitted' >&2
+            exit 1
+          fi
+          grep -F 'generated RPC drift detected' tmp/rpc-drift.log >/dev/null
+          grep -F 'git diff' tmp/rpc-drift.log >/dev/null || grep -F 'deterministic-internal-rpc' tmp/rpc-drift.log >/dev/null
+
+          PATH="$TOOLBIN:$PATH" "$BIN" up --skip-zed-pkg --ignore-rpc-gen-warning "$ROOT/.ores-compose.yaml" >tmp/rpc-ignore.log 2>&1 &
+          UP_PID=$!
+          for _ in $(seq 1 80); do
+            test -f "$ROOT/.ores/run/rpc-bootstrap-test.pid" && break
+            kill -0 "$UP_PID" 2>/dev/null || { cat tmp/rpc-ignore.log >&2; exit 1; }
+            sleep 0.1
+          done
+          PATH="$TOOLBIN:$PATH" "$BIN" down --shutdown-timeout-ms 1500 "$ROOT/.ores-compose.yaml"
+          wait "$UP_PID"
+
+          PATH="$TOOLBIN:$PATH" "$BIN" up --skip-zed-pkg --skip-rpc-gen "$ROOT/.ores-compose.yaml" >tmp/rpc-skip.log 2>&1 &
+          UP_PID=$!
+          for _ in $(seq 1 80); do
+            test -f "$ROOT/.ores/run/rpc-bootstrap-test.pid" && break
+            kill -0 "$UP_PID" 2>/dev/null || { cat tmp/rpc-skip.log >&2; exit 1; }
+            sleep 0.1
+          done
+          PATH="$TOOLBIN:$PATH" "$BIN" down --shutdown-timeout-ms 1500 "$ROOT/.ores-compose.yaml"
+          wait "$UP_PID"
